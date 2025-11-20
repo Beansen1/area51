@@ -17,5 +17,7 @@ Out of Scope:
 
 MEMBERS:
 Vincent Baculo
+
 Jose Anno Catapang Jr.
+
 Richnell Jei Capacia
