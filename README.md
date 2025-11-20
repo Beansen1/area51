@@ -14,3 +14,8 @@ Out of Scope:
 - Advanced data analytics and forecasting features
 - Integration with external store management software (ERP)
 - Mobile or Web-based version
+
+MEMBERS:
+Vincent Baculo
+Jose Anno Catapang Jr.
+Richnell Jei Capacia
