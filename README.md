@@ -16,6 +16,7 @@ Out of Scope:
 - Mobile or Web-based version
 
 MEMBERS:
+
 Vincent Baculo
 
 Jose Anno Catapang Jr.
