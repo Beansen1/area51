@@ -33,7 +33,7 @@ def init_db():
         line_total REAL,
         FOREIGN KEY(transaction_id) REFERENCES transactions(id)
     );
-
+    #Optional
     CREATE TABLE IF NOT EXISTS customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
@@ -42,4 +42,5 @@ def init_db():
     """)
 
     conn.commit()
+
     conn.close()
