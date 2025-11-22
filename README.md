@@ -15,6 +15,8 @@ Out of Scope:
 - Integration with external store management software (ERP)
 - Mobile or Web-based version
 
+We will add how to use this after the finalization of this project, thank you for understanding :).
+
 MEMBERS:
 
 Vincent Baculo
