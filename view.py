@@ -691,16 +691,26 @@ class ReceiptWindow(ctk.CTkToplevel):
         )
         change_lbl.grid(row=4, column=0, sticky="w", pady=2)
 
+        # QR CODE DISPLAY
+        if hasattr(self.order_data, "qr_path") and os.path.exists(self.order_data.qr_path):
+            qr_img = Image.open(self.order_data.qr_path)
+            qr_img = qr_img.resize((180, 180))
+
+            qr_photo = ctk.CTkImage(light_image=qr_img, size=(180, 180))
+
+            qr_label = ctk.CTkLabel(self, image=qr_photo, text="")
+            qr_label.grid(row=6, column=0, columnspan=2, pady=10)
+
         thanks_lbl = ctk.CTkLabel(
             self,
             text="Thank you for shopping at QuickStop!",
             font=ctk.CTkFont(size=16, weight="bold"),
         )
-        thanks_lbl.grid(row=6, column=0, columnspan=2, **padding)
+        thanks_lbl.grid(row=7, column=0, columnspan=2, **padding)
 
         #Buttons
         btn_frame = ctk.CTkFrame(self)
-        btn_frame.grid(row=7, column=0, columnspan=2, sticky="ew", padx=15, pady=10)
+        btn_frame.grid(row=8, column=0, columnspan=2, sticky="ew", padx=15, pady=10)
         btn_frame.grid_columnconfigure(0, weight=1)
         btn_frame.grid_columnconfigure(1, weight=1)
         btn_frame.grid_columnconfigure(2, weight=1)

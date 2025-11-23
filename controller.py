@@ -4,6 +4,8 @@ from typing import Optional, List
 from model import Cart, Item, CartItem, OrderData
 from database import DatabaseManager
 
+import qrcode
+import os
 
 class QuickStopController:
     def __init__(self, view, db_manager: DatabaseManager):
@@ -228,6 +230,9 @@ class QuickStopController:
             items=items_snapshot,
         )
 
+        qr_path = self.generate_qr_code(order_data)
+        order_data.qr_path = qr_path
+
         self.cart.clear()
         self._refresh_cart()
         #refresh item tiles with updated stock
@@ -286,3 +291,38 @@ class QuickStopController:
         self.view.show_info(
             "You can manage items directly in the databases."
         )
+    
+    def generate_qr_code(self, order_data: OrderData) -> str:
+
+        qr_folder = "qr_codes"
+        os.makedirs(qr_folder, exist_ok=True)
+
+        compact_items = ";".join(
+            f"{ci.item.name[:10]}x{ci.quantity}@{ci.item.price}"
+            for ci in order_data.items
+        )
+
+        qr_text = (
+            f"ID:{order_data.id}|"
+            f"DT:{order_data.order_datetime}|"
+            f"PM:{order_data.payment_method}|"
+            f"IT:{compact_items}|"
+            f"TTL:{order_data.total_amount}"
+        )
+
+        file_path = os.path.join(qr_folder, f"receipt_qr_{order_data.id}.png")
+
+        qr = qrcode.QRCode(
+            version=None,
+            box_size=8,      # smaller boxes = cleaner
+            border=3,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+        )
+
+        qr.add_data(qr_text)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(file_path)
+
+        return file_path
