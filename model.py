@@ -1,88 +1,75 @@
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from PIL import Image, ImageDraw, ImageFont
+import os
+from datetime import datetime
 
+VAT_RATE = 0.12
 
-VAT_RATE = 0.12  #12% VAT
+class ReceiptGenerator:
+    @staticmethod
+    def generate(order_data, items_data):
+        # Ensure directory exists
+        if not os.path.exists("receipts"):
+            os.makedirs("receipts")
 
+        filename = f"receipts/{order_data['order_number']}"
+        pdf_path = f"{filename}.pdf"
+        png_path = f"{filename}.png"
 
-@dataclass
-class Item:
-    id: int
-    name: str
-    price: float  #pre-VAT
-    stock: int
-    category: Optional[str] = None
-    active: int = 1
+        # 1. Generate PDF
+        c = canvas.Canvas(pdf_path, pagesize=letter)
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(100, 750, "QuickStop - Official Receipt")
+        
+        c.setFont("Helvetica", 12)
+        c.drawString(100, 730, f"Order #: {order_data['order_number']}")
+        c.drawString(100, 715, f"Date: {order_data['order_datetime']}")
+        c.drawString(100, 700, f"Payment: {order_data['payment_method']}")
 
+        y = 670
+        c.drawString(100, y, "Item")
+        c.drawString(300, y, "Qty")
+        c.drawString(350, y, "Price")
+        c.drawString(450, y, "Total")
+        y -= 20
+        c.line(100, y+15, 500, y+15)
 
-@dataclass
-class CartItem:
-    item: Item
-    quantity: int = 1
+        for item in items_data:
+            c.drawString(100, y, item['name'])
+            c.drawString(300, y, str(item['quantity']))
+            c.drawString(350, y, f"{item['unit_price']:.2f}")
+            c.drawString(450, y, f"{item['line_total']:.2f}")
+            y -= 20
 
-    def line_total(self) -> float:
-        return self.item.price * self.quantity
+        y -= 10
+        c.line(100, y+15, 500, y+15)
+        c.drawString(350, y, "Subtotal:")
+        c.drawString(450, y, f"{order_data['subtotal']:.2f}")
+        y -= 20
+        c.drawString(350, y, "VAT (12%):")
+        c.drawString(450, y, f"{order_data['vat_amount']:.2f}")
+        y -= 20
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(350, y, "TOTAL:")
+        c.drawString(450, y, f"PHP {order_data['total_amount']:.2f}")
+        
+        c.save()
 
+        # 2. Generate PNG (Simple text render for speed)
+        img = Image.new('RGB', (400, 600), color='white')
+        d = ImageDraw.Draw(img)
+        # Assuming default font exists, otherwise load a ttf
+        try:
+            fnt_head = ImageFont.truetype("arial.ttf", 20)
+            fnt_body = ImageFont.truetype("arial.ttf", 12)
+        except:
+            fnt_head = ImageFont.load_default()
+            fnt_body = ImageFont.load_default()
 
-class Cart:
-    def __init__(self):
-        self._items: Dict[int, CartItem] = {}
+        d.text((10,10), "QuickStop Receipt", font=fnt_head, fill=(0,0,0))
+        d.text((10,40), f"Order: {order_data['order_number']}", font=fnt_body, fill=(0,0,0))
+        d.text((10,60), f"Total: {order_data['total_amount']:.2f}", font=fnt_head, fill=(0,0,0))
+        img.save(png_path)
 
-    #manipulation 
-
-    def add_item(self, item: Item, quantity: int = 1):
-        if item.id in self._items:
-            self._items[item.id].quantity += quantity
-        else:
-            self._items[item.id] = CartItem(item=item, quantity=quantity)
-
-    def increase_quantity(self, item_id: int, step: int = 1):
-        if item_id in self._items:
-            self._items[item_id].quantity += step
-
-    def decrease_quantity(self, item_id: int, step: int = 1):
-        if item_id in self._items:
-            self._items[item_id].quantity -= step
-            if self._items[item_id].quantity <= 0:
-                del self._items[item_id]
-
-    def remove_item(self, item_id: int):
-        if item_id in self._items:
-            del self._items[item_id]
-
-    def clear(self):
-        self._items.clear()
-
-    #queries 
-
-    def get_items(self) -> List[CartItem]:
-        return list(self._items.values())
-
-    def get_item_quantity(self, item_id: int) -> int:
-        ci = self._items.get(item_id)
-        return ci.quantity if ci else 0
-
-    def subtotal(self) -> float:
-        return sum(ci.line_total() for ci in self._items.values())
-
-    def compute_totals(self):
-        subtotal = round(self.subtotal(), 2)
-        vat_amount = round(subtotal * VAT_RATE, 2)
-        total = round(subtotal + vat_amount, 2)
-        return subtotal, vat_amount, total
-
-    def is_empty(self) -> bool:
-        return len(self._items) == 0
-
-
-@dataclass
-class OrderData:
-    id: int
-    order_datetime: str
-    subtotal: float
-    vat_amount: float
-    total_amount: float
-    payment_method: str
-    cash_given: float
-    change: float
-    items: List[CartItem] = field(default_factory=list)
+        return pdf_path, png_path
