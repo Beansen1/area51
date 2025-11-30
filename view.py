@@ -5,10 +5,11 @@ from PyQt5.QtWidgets import (
     QMessageBox, QSplitter, QSizePolicy, QComboBox, QTabWidget, QDateEdit,
     QFileDialog, QSpinBox, QDoubleSpinBox, QFormLayout
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QDate
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QDate, QTimer
 from PyQt5.QtGui import QPixmap, QIcon, QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
+from datavisualization import VizPanel
 import os
 import base64
 
@@ -22,9 +23,9 @@ class ProductTile(QFrame):
         self.setObjectName("ProductTile")
         self.item_id = item_data['id']
         self.stock = item_data['stock']
-        # Allow tiles to expand/shrink with available space
-        self.setMinimumSize(180, 220)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        # Make tiles a consistent size for a tidy grid
+        self.setFixedSize(240, 320)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         
         layout = QVBoxLayout()
         layout.setContentsMargins(0,0,0,0)
@@ -278,8 +279,8 @@ class KioskMain(QWidget):
         # Right Side: Cart
         self.cart_panel = QWidget()
         self.cart_panel.setObjectName("CartPanel")
-        # Make cart panel flexible but keep a reasonable minimum width
-        self.cart_panel.setMinimumWidth(320)
+        # Make cart panel wide enough to avoid cutting off action buttons
+        self.cart_panel.setMinimumWidth(420)
         self.cart_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         cart_layout = QVBoxLayout()
         
@@ -292,7 +293,11 @@ class KioskMain(QWidget):
         self.cart_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.cart_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.cart_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.cart_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        # Ensure the Action column has enough room for the remove button
+        self.cart_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.cart_table.setColumnWidth(3, 80)
+        # Prevent the table from shrinking too small
+        self.cart_table.setMinimumWidth(380)
         self.cart_table.verticalHeader().setVisible(False)
         
         # Totals
@@ -353,7 +358,7 @@ class KioskMain(QWidget):
         spacing = self.grid_layout.spacing() or 10
         # Calculate approximate available width for grid area (widget width minus cart panel)
         available_width = max(200, self.width() - (self.cart_panel.width() if self.cart_panel.isVisible() else 0) - 60)
-        tile_min_w = 220
+        tile_min_w = 240
         max_cols = max(1, int(available_width // (tile_min_w + spacing)))
 
         row, col = 0, 0
@@ -388,11 +393,13 @@ class KioskMain(QWidget):
             qty_lay = QHBoxLayout()
             qty_lay.setContentsMargins(0,0,0,0)
             btn_minus = QPushButton("-")
-            btn_minus.setFixedSize(30,30)
+            btn_minus.setFixedSize(36,36)
             btn_minus.clicked.connect(lambda ch, i=item['id']: self.update_qty.emit(i, -1))
             lbl_q = QLabel(str(item['quantity']))
+            lbl_q.setFixedWidth(40)
+            lbl_q.setAlignment(Qt.AlignCenter)
             btn_plus = QPushButton("+")
-            btn_plus.setFixedSize(30,30)
+            btn_plus.setFixedSize(36,36)
             btn_plus.clicked.connect(lambda ch, i=item['id']: self.update_qty.emit(i, 1))
             qty_lay.addWidget(btn_minus)
             qty_lay.addWidget(lbl_q)
@@ -465,8 +472,41 @@ class PaymentDialog(QDialog):
                 QMessageBox.warning(self, "Error", "Invalid amount.")
                 return
         else:
-            cash_given = self.total # Exact for cashless
-            
+            # Cashless flow: show a QR placeholder and start a 10s countdown that auto-completes
+            cash_given = self.total
+            # Build a small QR dialog inside this dialog
+            qr_dlg = QDialog(self)
+            qr_dlg.setWindowTitle('Scan QR Code')
+            qr_dlg.setModal(True)
+            qr_layout = QVBoxLayout()
+            lbl = QLabel()
+            lbl.setAlignment(Qt.AlignCenter)
+            # Create a placeholder pixmap with text (simple)
+            pix = QPixmap(200,200)
+            pix.fill(Qt.white)
+            lbl.setPixmap(pix)
+            countdown_lbl = QLabel("Waiting for payment... 10s")
+            countdown_lbl.setAlignment(Qt.AlignCenter)
+            qr_layout.addWidget(lbl)
+            qr_layout.addWidget(countdown_lbl)
+            qr_dlg.setLayout(qr_layout)
+
+            # Timer to simulate payment confirmation
+            counter = {'n': 10}
+            timer = QTimer(qr_dlg)
+            def _tick():
+                counter['n'] -= 1
+                if counter['n'] <= 0:
+                    timer.stop()
+                    qr_dlg.accept()
+                else:
+                    countdown_lbl.setText(f"Waiting for payment... {counter['n']}s")
+
+            timer.timeout.connect(_tick)
+            timer.start(1000)
+            qr_dlg.exec_()
+
+        # After either flow completes, set payment_data and accept
         self.payment_data = {
             'method': method,
             'cash_given': cash_given,
@@ -474,43 +514,47 @@ class PaymentDialog(QDialog):
         }
         self.accept()
 
-class VizPanel(QWidget):
-    def __init__(self):
+
+class ReceiptDialog(QDialog):
+    def __init__(self, pdf_path=None, png_path=None):
         super().__init__()
+        self.setWindowTitle("Receipt")
+        self.setMinimumSize(420, 640)
         layout = QVBoxLayout()
-        
-        # Controls
-        controls = QHBoxLayout()
-        self.date_from = QDateEdit(QDate.currentDate().addDays(-30))
-        self.date_to = QDateEdit(QDate.currentDate())
-        btn_refresh = QPushButton("Refresh")
-        btn_refresh.clicked.connect(self.refresh_charts)
-        controls.addWidget(QLabel("From:"))
-        controls.addWidget(self.date_from)
-        controls.addWidget(QLabel("To:"))
-        controls.addWidget(self.date_to)
-        controls.addWidget(btn_refresh)
-        
-        # Tabs for charts
-        tabs = QTabWidget()
-        self.chart1 = FigureCanvas(plt.Figure(figsize=(5, 3)))
-        self.chart2 = FigureCanvas(plt.Figure(figsize=(5, 3)))
-        
-        tabs.addTab(self.chart1, "Daily Sales")
-        tabs.addTab(self.chart2, "Top Items")
-        
-        layout.addLayout(controls)
-        layout.addWidget(tabs)
+
+        if png_path and os.path.exists(png_path):
+            lbl = QLabel()
+            pm = QPixmap(png_path)
+            if not pm.isNull():
+                scaled = pm.scaled(380, 520, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                lbl.setPixmap(scaled)
+            else:
+                lbl.setText("Receipt preview not available")
+            layout.addWidget(lbl)
+        else:
+            layout.addWidget(QLabel("Receipt preview not available"))
+
+        btns = QHBoxLayout()
+        btn_open = QPushButton("Open PDF")
+        btn_close = QPushButton("Close")
+        btns.addWidget(btn_open)
+        btns.addWidget(btn_close)
+        layout.addLayout(btns)
+
+        def _open_pdf():
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.startfile(pdf_path)
+                except Exception:
+                    QMessageBox.information(self, "Open", f"PDF located at: {pdf_path}")
+            else:
+                QMessageBox.warning(self, "Not found", "PDF not available")
+
+        btn_open.clicked.connect(_open_pdf)
+        btn_close.clicked.connect(self.accept)
         self.setLayout(layout)
 
-    def refresh_charts(self):
-        # In a real implementation, Controller would pass DataFrame here
-        # This is a placeholder for Matplotlib integration
-        ax1 = self.chart1.figure.add_subplot(111)
-        ax1.clear()
-        ax1.plot([1,2,3], [10,20,15]) # Dummy
-        ax1.set_title("Sales Over Time")
-        self.chart1.draw()
+# VizPanel moved to `datavisualization.py` and imported above
 
 
 class AdminLoginDialog(QDialog):
@@ -629,14 +673,13 @@ class ItemEditorDialog(QDialog):
         self.accept()
 
 
-from PyQt5.QtCore import pyqtSignal
-
-
-class AdminPanel(QDialog):
+class AdminPanel(QWidget):
     add_item = pyqtSignal(dict)
     edit_item = pyqtSignal(int, dict)
     delete_item = pyqtSignal(int)
-    adjust_stock = pyqtSignal(int, int)  # item_id, delta
+    adjust_stock = pyqtSignal(int, int)  # item_id, new_stock
+    back_clicked = pyqtSignal()
+    exit_clicked = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -644,6 +687,14 @@ class AdminPanel(QDialog):
         self.setMinimumSize(900, 600)
 
         layout = QVBoxLayout()
+
+        # Top row: navigation
+        top_nav = QHBoxLayout()
+        self.btn_back = QPushButton("Back to Kiosk")
+        self.btn_exit = QPushButton("Exit App")
+        top_nav.addWidget(self.btn_back)
+        top_nav.addWidget(self.btn_exit)
+        top_nav.addStretch()
 
         # Controls
         ctrl = QHBoxLayout()
@@ -663,6 +714,7 @@ class AdminPanel(QDialog):
         self.table.setHorizontalHeaderLabels(["ID", "Name", "Price", "Stock", "Category", "Image", "Adjust"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
+        layout.addLayout(top_nav)
         layout.addLayout(ctrl)
         layout.addWidget(self.table)
         self.setLayout(layout)
@@ -671,6 +723,8 @@ class AdminPanel(QDialog):
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_del.clicked.connect(self._on_delete)
         self.btn_refresh.clicked.connect(self.refresh)
+        self.btn_back.clicked.connect(self.back_clicked.emit)
+        self.btn_exit.clicked.connect(self.exit_clicked.emit)
 
         self._categories = []
 
@@ -694,22 +748,35 @@ class AdminPanel(QDialog):
                 has_image = False
             self.table.setItem(row, 5, QTableWidgetItem('Yes' if has_image else 'No'))
 
-            # Stock adjust widget (minus/plus) - emits adjust_stock(item_id, delta)
+            # Stock adjust widget: spinbox for typing desired stock and a Set button
             adj_w = QWidget()
             adj_l = QHBoxLayout()
             adj_l.setContentsMargins(0, 0, 0, 0)
-            btn_minus = QPushButton('-')
-            btn_minus.setFixedWidth(28)
-            btn_plus = QPushButton('+')
-            btn_plus.setFixedWidth(28)
-            adj_l.addWidget(btn_minus)
-            adj_l.addWidget(btn_plus)
+            sb = QSpinBox()
+            sb.setRange(0, 1000000)
+            try:
+                sb.setValue(int(it.get('stock') or 0))
+            except Exception:
+                sb.setValue(0)
+            sb.setFixedWidth(80)
+            btn_set = QPushButton('Set')
+            btn_set.setFixedHeight(28)
+            adj_l.addWidget(sb)
+            adj_l.addWidget(btn_set)
             adj_w.setLayout(adj_l)
 
-            # Capture id for handlers
+            # When Set is clicked, emit the new stock value (controller computes delta)
+            def _make_set_handler(iid, spinbox):
+                def _handler():
+                    try:
+                        new = int(spinbox.value())
+                        self.adjust_stock.emit(iid, new)
+                    except Exception:
+                        QMessageBox.warning(self, "Error", "Invalid stock value")
+                return _handler
+
             item_id = int(it['id'])
-            btn_minus.clicked.connect(lambda ch, iid=item_id: self.adjust_stock.emit(iid, -1))
-            btn_plus.clicked.connect(lambda ch, iid=item_id: self.adjust_stock.emit(iid, 1))
+            btn_set.clicked.connect(_make_set_handler(item_id, sb))
 
             self.table.setCellWidget(row, 6, adj_w)
 
