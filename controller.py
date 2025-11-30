@@ -49,6 +49,13 @@ class MainController(QMainWindow):
         self.kiosk.remove_item.connect(self.remove_from_cart)
         self.kiosk.checkout_requested.connect(self.initiate_checkout)
         self.kiosk.insights_clicked.connect(lambda: self.stack.setCurrentWidget(self.viz))
+        # VizPanel has Back/Exit signals to return to kiosk or return to attract
+        try:
+            self.viz.back_clicked.connect(lambda: self.stack.setCurrentWidget(self.kiosk))
+            # Do NOT quit application on Insights exit; return to attract screen instead
+            self.viz.exit_clicked.connect(self.reset_to_attract)
+        except Exception:
+            pass
         self.kiosk.admin_clicked.connect(self.open_admin_login)
         
         # Global Event Filter for Idle Reset would go here
@@ -239,7 +246,7 @@ class MainController(QMainWindow):
 
             conn.commit()
             
-            # 3. Generate Receipt
+            # 3. Generate Receipt (PNG only)
             order_info = {
                 'order_number': order_num,
                 'order_datetime': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -248,13 +255,21 @@ class MainController(QMainWindow):
                 'vat_amount': vat,
                 'total_amount': total
             }
-            pdf, png = ReceiptGenerator.generate(order_info, items_for_receipt)
-            
-            # Update DB with paths
-            cursor.execute("UPDATE orders SET receipt_pdf_path=?, receipt_png_path=? WHERE id=?", (pdf, png, order_id))
+            png = ReceiptGenerator.generate(order_info, items_for_receipt)
+
+            # Update DB with png path (no PDF)
+            cursor.execute("UPDATE orders SET receipt_png_path=? WHERE id=?", (png, order_id))
             conn.commit()
-            
-            QMessageBox.information(self, "Success", "Order Placed Successfully!\nPlease take your receipt.")
+
+            QMessageBox.information(self, "Success", "Order Placed Successfully!\nPreparing receipt...")
+
+            # Show receipt dialog (png preview)
+            try:
+                from view import ReceiptDialog
+                dlg = ReceiptDialog(pdf_path=None, png_path=png)
+                dlg.exec_()
+            except Exception:
+                pass
             
             # Reset
             self.cart.clear()
@@ -334,10 +349,31 @@ class MainController(QMainWindow):
         # Both roles can adjust stock via the adjust_stock signal
         panel.adjust_stock.connect(self.admin_adjust_stock)
 
-        panel.exec_()
+        # Connect navigation: Back returns to kiosk, Exit quits app
+        panel.back_clicked.connect(lambda: self._close_dynamic_panel(panel))
+        # Don't quit the whole app; exit should return to attract/reset state and remove panel
+        panel.exit_clicked.connect(lambda p=panel: (self._close_dynamic_panel(p), self.reset_to_attract()))
 
-        # After closing, reload items for kiosk view
-        self.load_items()
+        # Add the admin panel into the main stack so it replaces kiosk view
+        self.stack.addWidget(panel)
+        self.stack.setCurrentWidget(panel)
+
+    def _close_dynamic_panel(self, panel):
+        # Return to kiosk and remove the dynamic panel from the stack
+        try:
+            self.stack.setCurrentWidget(self.kiosk)
+        except Exception:
+            pass
+        try:
+            self.stack.removeWidget(panel)
+            panel.deleteLater()
+        except Exception:
+            pass
+        # Refresh items in kiosk
+        try:
+            self.load_items()
+        except Exception:
+            pass
 
     def admin_create_item(self, payload):
         # payload: {name, price, stock, category_id, image_path}
@@ -361,47 +397,54 @@ class MainController(QMainWindow):
         finally:
             conn.close()
 
-    def admin_adjust_stock(self, item_id, delta):
-        """Adjust stock for an item by delta (can be negative)."""
-        conn = db.connect()
+    def admin_adjust_stock(self, item_id, new_stock):
+        """Set stock for an item to a specific value `new_stock` (typed by admin).
+        The method computes the delta (new - current) and records that change.
+        """
         try:
+            conn = db.connect()
             cur = conn.cursor()
             row = conn.execute("SELECT stock FROM items WHERE id=?", (item_id,)).fetchone()
             if not row:
                 QMessageBox.warning(self, "Not Found", "Item not found")
                 return
+
             current = int(row['stock'])
-            new_stock = current + int(delta)
-            if new_stock < 0:
-                new_stock = 0
-
-            cur.execute("UPDATE items SET stock=? WHERE id=?", (new_stock, item_id))
-            cur.execute("INSERT INTO stock_movements (item_id, change, reason, created_at) VALUES (?, ?, ?, ?)",
-                        (item_id, delta, 'manual_adjust', datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            conn.commit()
-            QMessageBox.information(self, "Success", f"Stock updated: {current} -> {new_stock}")
-
-            # Refresh admin panel items and kiosk
             try:
-                # If an AdminPanel is open, repopulate it by re-querying
-                conn2 = db.connect()
-                items = conn2.execute("SELECT i.*, c.name as category_name FROM items i LEFT JOIN categories c ON i.category_id=c.id").fetchall()
-                items_list = [dict(i) for i in items]
-                conn2.close()
-                try:
-                    panel = None
-                    # attempt to find an instance variable 'panel' in scope isn't possible; instead rely on UI user to refresh
-                    # but refresh kiosk display
-                    self.load_items()
-                except Exception:
-                    self.load_items()
+                new_stock_val = int(new_stock)
             except Exception:
+                QMessageBox.warning(self, "Invalid Value", "Please enter a valid integer for stock")
+                return
+
+            if new_stock_val < 0:
+                new_stock_val = 0
+
+            delta = new_stock_val - current
+
+            cur.execute("UPDATE items SET stock=? WHERE id=?", (new_stock_val, item_id))
+            cur.execute(
+                "INSERT INTO stock_movements (item_id, change, reason, created_at) VALUES (?, ?, ?, ?)",
+                (item_id, delta, 'manual_adjust', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            conn.commit()
+            QMessageBox.information(self, "Success", f"Stock updated: {current} -> {new_stock_val}")
+
+            # Refresh kiosk display
+            try:
                 self.load_items()
+            except Exception:
+                pass
         except Exception as e:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             QMessageBox.critical(self, "Error", f"Failed to update stock: {e}")
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def admin_update_item(self, item_id, payload):
         conn = db.connect()
