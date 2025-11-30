@@ -15,6 +15,10 @@ Out of Scope:
 - Integration with external store management software (ERP)
 - Mobile or Web-based version
 
+Before running make sure to input this in the terminal:
+python -m pip install --upgrade pip
+python -m pip install -r requirementsnito.txt
+
 We will add how to use this after the finalization of this project, thank you for understanding :).
 
 MEMBERS:
