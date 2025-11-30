@@ -1,307 +1,465 @@
+from PyQt5.QtWidgets import (
+    QApplication, 
+    QMainWindow, 
+    QMessageBox, 
+    QStackedWidget,  
+    QDialog          
+)
+from PyQt5.QtCore import QTimer
+from view import AttractScreen, KioskMain, PaymentDialog, VizPanel, AdminLoginDialog, AdminPanel
+from database import db
+from model import ReceiptGenerator
 from datetime import datetime
-from typing import Optional, List
 
-from model import Cart, Item, CartItem, OrderData
-from database import DatabaseManager
+class MainController(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QuickStop Kiosk")
+        self.resize(1024, 768)
+        
+        # Data State
+        self.cart = {} # {item_id: {data, qty}}
+        self.current_cat_id = 0
+        self.search_text = ""
+        
+        # Stack Setup
+        self.stack = QStackedWidget()
+        self.attract = AttractScreen()
+        self.kiosk = KioskMain()
+        self.viz = VizPanel()
+        
+        self.stack.addWidget(self.attract)
+        self.stack.addWidget(self.kiosk)
+        self.stack.addWidget(self.viz)
+        
+        self.setCentralWidget(self.stack)
+        
+        # Idle Timer (30s)
+        self.idle_timer = QTimer()
+        self.idle_timer.setInterval(30000)
+        self.idle_timer.timeout.connect(self.reset_to_attract)
+        self.idle_timer.start()
+        
+        # Connect Signals
+        self.attract.start_clicked.connect(self.start_ordering)
+        self.kiosk.category_selected.connect(self.filter_category)
+        self.kiosk.search_query.connect(self.filter_search)
+        self.kiosk.item_added.connect(self.add_to_cart)
+        self.kiosk.update_qty.connect(self.update_cart_qty)
+        self.kiosk.remove_item.connect(self.remove_from_cart)
+        self.kiosk.checkout_requested.connect(self.initiate_checkout)
+        self.kiosk.insights_clicked.connect(lambda: self.stack.setCurrentWidget(self.viz))
+        self.kiosk.admin_clicked.connect(self.open_admin_login)
+        
+        # Global Event Filter for Idle Reset would go here
+        
+        # Initial Load
+        self.load_categories()
+        self.load_items()
 
-import qrcode
-import os
+    def reset_timer(self):
+        self.idle_timer.start(30000)
 
-class QuickStopController:
-    def __init__(self, view, db_manager: DatabaseManager):
-        self.view = view
-        self.db = db_manager
-        self.cart = Cart()
-        self.last_order_id: Optional[int] = None
-
-        self.view.set_controller(self)
-        self._init_categories()
-        self.load_items(category="All")
-        self._refresh_cart()
-
-    #init 
-
-    def _init_categories(self):
-        categories = self.db.get_categories()
-        categories = [c or "Others" for c in categories]
-        categories = sorted(set(categories))
-
-        if "Others" in categories:
-            categories.remove("Others")
-            categories.append("Others")
-
-        if "Meals" not in categories:
-            categories.append("Meals")
-        if "Snacks" not in categories:
-            categories.append("Snacks")
-        if "Drinks" not in categories:
-            categories.append("Drinks")
-        if "Desserts" not in categories:
-            categories.append("Desserts")
-
-        if "All" not in categories:
-            categories.insert(0, "All")
-        self.view.build_category_buttons(categories)
-
-    #items / categories
-
-    def load_items(self, category: str = "All", search_text: str = ""):
-        rows = self.db.get_items(
-            category=None if category == "All" else category,
-            search=search_text.strip() or None,
-        )
-        items: List[Item] = [
-            Item(
-                id=row["id"],
-                name=row["name"],
-                price=row["price"],
-                stock=row["stock"],
-                category=row["category"],
-                active=row["active"],
-            )
-            for row in rows
-        ]
-        self.view.display_items(items, category)
-
-    def handle_category_selected(self, category: str):
-        self.view.set_active_category(category)
-        search_text = self.view.get_search_text()
-        self.load_items(category, search_text)
-
-    def handle_search(self):
-        category = self.view.current_category
-        search_text = self.view.get_search_text()
-        self.load_items(category, search_text)
-
-    def handle_clear_search(self):
-        self.view.clear_search_entry()
-        self.load_items(self.view.current_category, "")
-
-    #cart
-
-    def _refresh_cart(self):
-        items = self.cart.get_items()
-        subtotal, vat_amount, total = self.cart.compute_totals()
-        self.view.refresh_cart(items, subtotal, vat_amount, total)
-
-    def handle_add_to_cart(self, item_id: int):
-        row = self.db.get_item_by_id(item_id)
-        if not row:
-            self.view.show_error("Item not found.")
-            return
-
-        db_stock = row["stock"]
-        current_qty = self.cart.get_item_quantity(item_id)
-
-        if current_qty + 1 > db_stock:
-            self.view.show_error("Not enough stock for this item.")
-            return
-
-        item = Item(
-            id=row["id"],
-            name=row["name"],
-            price=row["price"],
-            stock=row["stock"],
-            category=row["category"],
-            active=row["active"],
-        )
-        self.cart.add_item(item, 1)
-        self._refresh_cart()
-
-    def handle_cart_increase(self):
-        item_id = self.view.get_selected_cart_item_id()
-        if item_id is None:
-            self.view.show_info("Please select an item from the cart first.")
-            return
-
-        row = self.db.get_item_by_id(item_id)
-        if not row:
-            self.view.show_error("Item not found.")
-            return
-
-        db_stock = row["stock"]
-        current_qty = self.cart.get_item_quantity(item_id)
-
-        if current_qty + 1 > db_stock:
-            self.view.show_error("Not enough stock for this item.")
-            return
-
-        self.cart.increase_quantity(item_id, 1)
-        self._refresh_cart()
-
-    def handle_cart_decrease(self):
-        item_id = self.view.get_selected_cart_item_id()
-        if item_id is None:
-            self.view.show_info("Please select an item from the cart first.")
-            return
-        self.cart.decrease_quantity(item_id, 1)
-        self._refresh_cart()
-
-    def handle_cart_remove_item(self):
-        item_id = self.view.get_selected_cart_item_id()
-        if item_id is None:
-            self.view.show_info("Please select an item from the cart first.")
-            return
-        self.cart.remove_item(item_id)
-        self._refresh_cart()
-
-    def handle_cart_clear(self):
-        if self.cart.is_empty():
-            self.view.show_info("Cart is already empty.")
-            return
-        if self.view.ask_yes_no("Clear Cart", "Remove all items from the cart?"):
-            self.cart.clear()
-            self._refresh_cart()
-
-    #checkout & payment
-
-    def handle_checkout(self):
-        if self.cart.is_empty():
-            self.view.show_info("Cart is empty. Add items before checkout.")
-            return
-        subtotal, vat_amount, total = self.cart.compute_totals()
-        self.view.open_payment_window(subtotal, vat_amount, total)
-
-    def process_payment(self, payment_method: str, amount_given_str: str) -> bool:
-        if self.cart.is_empty():
-            self.view.show_error("Cart is empty.")
-            return False
-
-        try:
-            amount_given = float(amount_given_str)
-        except ValueError:
-            self.view.show_error("Amount given must be a numeric value.")
-            return False
-
-        if amount_given <= 0:
-            self.view.show_error("Amount given must be greater than 0.")
-            return False
-
-        subtotal, vat_amount, total = self.cart.compute_totals()
-        if amount_given + 1e-6 < total:
-            self.view.show_error("Insufficient payment amount.")
-            return False
-
-        change = round(amount_given - total, 2)
-
-        items_snapshot = list(self.cart.get_items())
-        order_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        try:
-            order_id = self.db.insert_order(
-                subtotal=subtotal,
-                vat_amount=vat_amount,
-                total_amount=total,
-                payment_method=payment_method.upper(),
-                cash_given=amount_given,
-                change=change,
-                order_datetime=order_datetime,
-            )
-            #Insert order_items and update stock
-            for ci in items_snapshot:
-                self.db.insert_order_item(
-                    order_id=order_id,
-                    item_id=ci.item.id,
-                    quantity=ci.quantity,
-                    unit_price=ci.item.price,
-                    line_total=ci.line_total(),
-                )
-
-                row = self.db.get_item_by_id(ci.item.id)
-                if row:
-                    new_stock = max(0, row["stock"] - ci.quantity)
-                    self.db.update_item_stock(ci.item.id, new_stock)
-
-        except Exception as exc:
-            self.view.show_error(f"Failed to save order: {exc}")
-            return False
-
-        self.last_order_id = order_id
-
-        order_data = OrderData(
-            id=order_id,
-            order_datetime=order_datetime,
-            subtotal=subtotal,
-            vat_amount=vat_amount,
-            total_amount=total,
-            payment_method=payment_method.upper(),
-            cash_given=amount_given,
-            change=change,
-            items=items_snapshot,
-        )
-
-        qr_path = self.generate_qr_code(order_id)
-        order_data.qr_path = qr_path
-
+    # --- NAV ---
+    def reset_to_attract(self):
         self.cart.clear()
-        self._refresh_cart()
-        #refresh item tiles with updated stock
-        self.load_items(self.view.current_category, self.view.get_search_text())
+        self.update_cart_ui()
+        self.stack.setCurrentWidget(self.attract)
 
-        self.view.show_receipt_window(order_data)
-        return True
+    def start_ordering(self):
+        self.reset_timer()
+        self.stack.setCurrentWidget(self.kiosk)
 
-    #extras 
-    def handle_cancel_order(self):
-        if self.cart.is_empty():
-            self.view.show_info("There is no active order to cancel.")
+    # --- DATA ---
+    def load_categories(self):
+        conn = db.connect()
+        cats = conn.execute("SELECT * FROM categories").fetchall()
+        self.kiosk.populate_categories(cats)
+        conn.close()
+
+    def load_items(self):
+        conn = db.connect()
+        query = "SELECT * FROM items WHERE active=1"
+        params = []
+        
+        if self.current_cat_id != 0:
+            query += " AND category_id = ?"
+            params.append(self.current_cat_id)
+            
+        if self.search_text:
+            query += " AND name LIKE ?"
+            params.append(f"%{self.search_text}%")
+            
+        items = conn.execute(query, params).fetchall()
+        self.kiosk.update_grid(items)
+        conn.close()
+
+    def filter_category(self, cat_id):
+        self.current_cat_id = cat_id
+        self.load_items()
+        self.reset_timer()
+
+    def filter_search(self, text):
+        self.search_text = text
+        self.load_items()
+        self.reset_timer()
+
+    # --- CART LOGIC ---
+    def add_to_cart(self, item_id):
+        self.reset_timer()
+        conn = db.connect()
+        item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        conn.close()
+        
+        current_qty = self.cart.get(item_id, {}).get('qty', 0)
+        
+        if current_qty + 1 > item['stock']:
+            QMessageBox.warning(self, "Stock Limit", "Not enough stock available.")
             return
-        if self.view.ask_yes_no(
-            "Cancel Order", "Cancel the current order and clear the cart?"
-        ):
+
+        if item_id in self.cart:
+            self.cart[item_id]['qty'] += 1
+        else:
+            self.cart[item_id] = {'data': item, 'qty': 1}
+            
+        self.update_cart_ui()
+
+    def update_cart_qty(self, item_id, change):
+        self.reset_timer()
+        if item_id in self.cart:
+            new_qty = self.cart[item_id]['qty'] + change
+            if new_qty <= 0:
+                del self.cart[item_id]
+            else:
+                # Check stock cap
+                conn = db.connect()
+                stock = conn.execute("SELECT stock FROM items WHERE id=?", (item_id,)).fetchone()['stock']
+                conn.close()
+                if new_qty > stock:
+                    return # Silent fail or warn
+                self.cart[item_id]['qty'] = new_qty
+            self.update_cart_ui()
+
+    def remove_from_cart(self, item_id):
+        self.reset_timer()
+        if item_id in self.cart:
+            del self.cart[item_id]
+            self.update_cart_ui()
+
+    def update_cart_ui(self):
+        display_list = []
+        subtotal = 0.0
+        
+        for iid, info in self.cart.items():
+            qty = info['qty']
+            price = info['data']['price']
+            subtotal += price * qty
+            display_list.append({
+                'id': iid,
+                'name': info['data']['name'],
+                'price': price,
+                'quantity': qty
+            })
+            
+        vat = subtotal * 0.12
+        total = subtotal + vat
+        
+        self.kiosk.update_cart_display(display_list, {'subtotal':subtotal, 'vat':vat, 'total':total})
+
+    # --- CHECKOUT ---
+    def initiate_checkout(self):
+        self.reset_timer()
+        if not self.cart:
+            return
+            
+        # Calc totals
+        subtotal = sum(i['data']['price'] * i['qty'] for i in self.cart.values())
+        vat = subtotal * 0.12
+        total = subtotal + vat
+
+        # Build a readable summary of everything in the cart for confirmation
+        lines = []
+        for iid, info in self.cart.items():
+            name = info['data']['name']
+            qty = info['qty']
+            price = info['data']['price']
+            line_total = price * qty
+            lines.append(f"{name} x{qty} @ {price:.2f} = {line_total:.2f}")
+
+        items_text = "\n".join(lines)
+        summary = f"Please review your cart before proceeding to payment:\n\n{items_text}\n\nSubtotal: {subtotal:.2f}\nVAT (12%): {vat:.2f}\nTotal: {total:.2f}"
+
+        # Ask for confirmation
+        resp = QMessageBox.question(self, "Confirm Order", summary, QMessageBox.Yes | QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+
+        # Proceed to payment dialog after confirmation
+        dlg = PaymentDialog(total)
+        if dlg.exec_() == QDialog.Accepted:
+            self.process_transaction(dlg.payment_data, subtotal, vat, total)
+
+    def process_transaction(self, pay_data, subtotal, vat, total):
+        conn = db.connect()
+        try:
+            # 1. Create Order
+            order_num = f"QS-{datetime.now().strftime('%Y%m%d')}-{int(datetime.now().timestamp())}"
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO orders (order_number, order_datetime, subtotal, vat_amount, total_amount, payment_method, cash_given, change)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (order_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), subtotal, vat, total, pay_data['method'], pay_data['cash_given'], pay_data['change']))
+            order_id = cursor.lastrowid
+            
+            # 2. Insert Items & Update Stock
+            items_for_receipt = []
+            
+            for iid, info in self.cart.items():
+                qty = info['qty']
+                price = info['data']['price']
+                line_total = price * qty
+                
+                # Add to order_items
+                cursor.execute("INSERT INTO order_items (order_id, item_id, quantity, unit_price, line_total) VALUES (?,?,?,?,?)", 
+                               (order_id, iid, qty, price, line_total))
+                
+                # Update Stock
+                cursor.execute("UPDATE items SET stock = stock - ? WHERE id = ?", (qty, iid))
+                
+                # Log Movement
+                cursor.execute("INSERT INTO stock_movements (item_id, change, reason, created_at) VALUES (?, ?, 'sale', ?)",
+                               (iid, -qty, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                
+                items_for_receipt.append({
+                    'name': info['data']['name'],
+                    'quantity': qty,
+                    'unit_price': price,
+                    'line_total': line_total
+                })
+
+            conn.commit()
+            
+            # 3. Generate Receipt
+            order_info = {
+                'order_number': order_num,
+                'order_datetime': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'payment_method': pay_data['method'],
+                'subtotal': subtotal,
+                'vat_amount': vat,
+                'total_amount': total
+            }
+            pdf, png = ReceiptGenerator.generate(order_info, items_for_receipt)
+            
+            # Update DB with paths
+            cursor.execute("UPDATE orders SET receipt_pdf_path=?, receipt_png_path=? WHERE id=?", (pdf, png, order_id))
+            conn.commit()
+            
+            QMessageBox.information(self, "Success", "Order Placed Successfully!\nPlease take your receipt.")
+            
+            # Reset
             self.cart.clear()
-            self._refresh_cart()
+            self.update_cart_ui()
+            self.load_items() # Refresh stock display
+            self.reset_to_attract()
+            
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Transaction failed: {str(e)}")
+        finally:
+            conn.close()
 
-    def handle_reprint_last_receipt(self):
-        order_row, items_rows = self.db.get_last_order_with_items()
-        if not order_row:
-            self.view.show_info("No previous orders found.")
+    # --- ADMIN / SUPER-ADMIN ---
+    def open_admin_login(self):
+        dlg = AdminLoginDialog()
+        if dlg.exec_() != QDialog.Accepted:
             return
 
-        cart_items: List[CartItem] = []
-        for r in items_rows:
-            item = Item(
-                id=r["item_id"],
-                name=r["name"],
-                price=r["unit_price"],
-                stock=0,
-                category=None,
-            )
-            cart_items.append(CartItem(item=item, quantity=r["quantity"]))
+        username = dlg.input_user.text().strip()
+        password = dlg.input_pass.text().strip()
 
-        order_data = OrderData(
-            id=order_row["id"],
-            order_datetime=order_row["order_datetime"],
-            subtotal=order_row["subtotal"],
-            vat_amount=order_row["vat_amount"],
-            total_amount=order_row["total_amount"],
-            payment_method=order_row["payment_method"],
-            cash_given=order_row["cash_given"],
-            change=order_row["change"],
-            items=cart_items,
-        )
-        self.view.show_receipt_window(order_data)
+        conn = db.connect()
+        try:
+            row = conn.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+            if not row:
+                QMessageBox.warning(self, "Login Failed", "User not found or inactive")
+                return
+            # Verify password
+            from passlib.hash import bcrypt
+            if not bcrypt.verify(password, row['password_hash']):
+                QMessageBox.warning(self, "Login Failed", "Invalid credentials")
+                return
 
-    def handle_today_sales_summary(self):
-        total = self.db.get_today_sales_total()
-        self.view.show_info(f"Today's total sales: ₱ {total:,.2f}")
+            # Open admin panel based on role
+            role = row['role']
+            if role == 'super_admin':
+                self.open_admin_panel(role='super_admin')
+            elif role == 'admin':
+                # admin can only adjust stock
+                self.open_admin_panel(role='admin')
+            else:
+                QMessageBox.warning(self, "Unauthorized", "Admin access required")
+                return
+        finally:
+            conn.close()
 
-    def handle_admin_mode(self):
-        #placeholder hehe
-        self.view.show_info(
-            "You can manage items directly in the databases."
-        )
-    
-    def generate_qr_code(self, order_id: int) -> str:
-        # Folder to store qr codes
-        qr_folder = "qr_codes"
-        os.makedirs(qr_folder, exist_ok=True)
+    def open_admin_panel(self, role='super_admin'):
+        panel = AdminPanel()
 
-        qr_data = f"ORDER_ID:{order_id}"
-        file_path = os.path.join(qr_folder, f"receipt_qr_{order_id}.png")
+        # Load categories and items
+        conn = db.connect()
+        cats = conn.execute("SELECT * FROM categories").fetchall()
+        categories = [dict(c) for c in cats]
+        panel.load_categories(categories)
 
-        # Generate QR
-        img = qrcode.make(qr_data)
-        img.save(file_path)
+        items = conn.execute("SELECT i.*, c.name as category_name FROM items i LEFT JOIN categories c ON i.category_id=c.id").fetchall()
+        items_list = [dict(i) for i in items]
+        panel.populate_items(items_list)
+        conn.close()
 
-        return file_path
+        # Connect signals
+        # Super admin: full access. Admin: only stock adjust.
+        if role == 'super_admin':
+            panel.add_item.connect(self.admin_create_item)
+            panel.edit_item.connect(self.admin_update_item)
+            panel.delete_item.connect(self.admin_delete_item)
+        else:
+            # hide create/edit/delete controls for limited admin
+            try:
+                panel.btn_add.hide()
+                panel.btn_edit.hide()
+                panel.btn_del.hide()
+            except Exception:
+                pass
+
+        # Both roles can adjust stock via the adjust_stock signal
+        panel.adjust_stock.connect(self.admin_adjust_stock)
+
+        panel.exec_()
+
+        # After closing, reload items for kiosk view
+        self.load_items()
+
+    def admin_create_item(self, payload):
+        # payload: {name, price, stock, category_id, image_path}
+        conn = db.connect()
+        cur = conn.cursor()
+        try:
+            img_path = payload.get('image_path')
+            saved_path = None
+            raw_bytes = None
+            if img_path:
+                saved_path, raw_bytes = self._save_image_file(img_path)
+
+            # Insert into items, storing image bytes into the BLOB 'image' column
+            cur.execute("INSERT INTO items (name, price, stock, category_id, image) VALUES (?,?,?,?,?)",
+                        (payload['name'], payload['price'], payload['stock'], payload['category_id'], raw_bytes))
+            conn.commit()
+            QMessageBox.information(self, "Success", "Item added")
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Failed to add item: {e}")
+        finally:
+            conn.close()
+
+    def admin_adjust_stock(self, item_id, delta):
+        """Adjust stock for an item by delta (can be negative)."""
+        conn = db.connect()
+        try:
+            cur = conn.cursor()
+            row = conn.execute("SELECT stock FROM items WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                QMessageBox.warning(self, "Not Found", "Item not found")
+                return
+            current = int(row['stock'])
+            new_stock = current + int(delta)
+            if new_stock < 0:
+                new_stock = 0
+
+            cur.execute("UPDATE items SET stock=? WHERE id=?", (new_stock, item_id))
+            cur.execute("INSERT INTO stock_movements (item_id, change, reason, created_at) VALUES (?, ?, ?, ?)",
+                        (item_id, delta, 'manual_adjust', datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+            QMessageBox.information(self, "Success", f"Stock updated: {current} -> {new_stock}")
+
+            # Refresh admin panel items and kiosk
+            try:
+                # If an AdminPanel is open, repopulate it by re-querying
+                conn2 = db.connect()
+                items = conn2.execute("SELECT i.*, c.name as category_name FROM items i LEFT JOIN categories c ON i.category_id=c.id").fetchall()
+                items_list = [dict(i) for i in items]
+                conn2.close()
+                try:
+                    panel = None
+                    # attempt to find an instance variable 'panel' in scope isn't possible; instead rely on UI user to refresh
+                    # but refresh kiosk display
+                    self.load_items()
+                except Exception:
+                    self.load_items()
+            except Exception:
+                self.load_items()
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Failed to update stock: {e}")
+        finally:
+            conn.close()
+
+    def admin_update_item(self, item_id, payload):
+        conn = db.connect()
+        cur = conn.cursor()
+        try:
+            img_path = payload.get('image_path')
+            saved_path = None
+            raw_bytes = None
+            if img_path:
+                saved_path, raw_bytes = self._save_image_file(img_path)
+
+            if raw_bytes is not None:
+                cur.execute("UPDATE items SET name=?, price=?, stock=?, category_id=?, image=? WHERE id=?",
+                            (payload['name'], payload['price'], payload['stock'], payload['category_id'], raw_bytes, item_id))
+            else:
+                cur.execute("UPDATE items SET name=?, price=?, stock=?, category_id=? WHERE id=?",
+                            (payload['name'], payload['price'], payload['stock'], payload['category_id'], item_id))
+            conn.commit()
+            QMessageBox.information(self, "Success", "Item updated")
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Failed to update item: {e}")
+        finally:
+            conn.close()
+
+    def admin_delete_item(self, item_id):
+        conn = db.connect()
+        try:
+            conn.execute("DELETE FROM items WHERE id=?", (item_id,))
+            conn.commit()
+            QMessageBox.information(self, "Deleted", "Item deleted")
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Failed to delete item: {e}")
+        finally:
+            conn.close()
+
+    def _save_image_file(self, src_path):
+        import os, shutil
+        # Ensure assets/images exists
+        dest_dir = os.path.join('assets', 'images')
+        os.makedirs(dest_dir, exist_ok=True)
+        try:
+            basename = os.path.basename(src_path)
+            dest_path = os.path.join(dest_dir, basename)
+            shutil.copy(src_path, dest_path)
+            # Read raw bytes to store in the DB blob column
+            try:
+                with open(dest_path, 'rb') as f:
+                    raw = f.read()
+            except Exception:
+                raw = None
+            return dest_path, raw
+        except Exception:
+            # If we couldn't copy, attempt to read the original path
+            try:
+                with open(src_path, 'rb') as f:
+                    raw = f.read()
+                return src_path, raw
+            except Exception:
+                return src_path, None
