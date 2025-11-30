@@ -1,75 +1,117 @@
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
 from PIL import Image, ImageDraw, ImageFont
 import os
 from datetime import datetime
 
 VAT_RATE = 0.12
 
+
 class ReceiptGenerator:
     @staticmethod
+    def _load_font(size, bold=False):
+        # Try common system fonts, fallback to default
+        candidates = ["arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"]
+        for f in candidates:
+            try:
+                return ImageFont.truetype(f, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    @staticmethod
     def generate(order_data, items_data):
-        # Ensure directory exists
+        """Generate a PNG receipt (full details, store-style) and return the png path.
+        No PDF is created.
+        """
         if not os.path.exists("receipts"):
             os.makedirs("receipts")
 
         filename = f"receipts/{order_data['order_number']}"
-        pdf_path = f"{filename}.pdf"
         png_path = f"{filename}.png"
 
-        # 1. Generate PDF
-        c = canvas.Canvas(pdf_path, pagesize=letter)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(100, 750, "QuickStop - Official Receipt")
-        
-        c.setFont("Helvetica", 12)
-        c.drawString(100, 730, f"Order #: {order_data['order_number']}")
-        c.drawString(100, 715, f"Date: {order_data['order_datetime']}")
-        c.drawString(100, 700, f"Payment: {order_data['payment_method']}")
+        # Layout: compute height based on number of items
+        width = 600
+        header_h = 180
+        line_h = 28
+        footer_h = 160
+        items_h = max(200, len(items_data) * line_h + 20)
+        height = header_h + items_h + footer_h
 
-        y = 670
-        c.drawString(100, y, "Item")
-        c.drawString(300, y, "Qty")
-        c.drawString(350, y, "Price")
-        c.drawString(450, y, "Total")
-        y -= 20
-        c.line(100, y+15, 500, y+15)
+        img = Image.new('RGB', (width, height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
 
-        for item in items_data:
-            c.drawString(100, y, item['name'])
-            c.drawString(300, y, str(item['quantity']))
-            c.drawString(350, y, f"{item['unit_price']:.2f}")
-            c.drawString(450, y, f"{item['line_total']:.2f}")
-            y -= 20
+        # Fonts
+        f_head = ReceiptGenerator._load_font(28, bold=True)
+        f_sub = ReceiptGenerator._load_font(16)
+        f_body = ReceiptGenerator._load_font(14)
+        f_mono = ReceiptGenerator._load_font(12)
 
-        y -= 10
-        c.line(100, y+15, 500, y+15)
-        c.drawString(350, y, "Subtotal:")
-        c.drawString(450, y, f"{order_data['subtotal']:.2f}")
-        y -= 20
-        c.drawString(350, y, "VAT (12%):")
-        c.drawString(450, y, f"{order_data['vat_amount']:.2f}")
-        y -= 20
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(350, y, "TOTAL:")
-        c.drawString(450, y, f"PHP {order_data['total_amount']:.2f}")
-        
-        c.save()
+        x = 40
+        y = 30
 
-        # 2. Generate PNG (Simple text render for speed)
-        img = Image.new('RGB', (400, 600), color='white')
-        d = ImageDraw.Draw(img)
-        # Assuming default font exists, otherwise load a ttf
+        # Header
+        draw.text((x, y), "QuickStop Convenience", font=f_head, fill=(20, 20, 20))
+        y += 36
+        draw.text((x, y), "123 Market St., Barangay Central", font=f_sub, fill=(60, 60, 60))
+        y += 20
+        draw.text((x, y), "Tarlac City | (+63) 912-345-6789", font=f_sub, fill=(60, 60, 60))
+        y += 26
+        draw.text((x, y), f"Order #: {order_data.get('order_number')}", font=f_body, fill=(0, 0, 0))
+        y += 20
+        draw.text((x, y), f"Date: {order_data.get('order_datetime')}", font=f_body, fill=(0, 0, 0))
+        y += 26
+
+        draw.line((x, y, width - x, y), fill=(200, 200, 200), width=1)
+        y += 12
+
+        # Column headers
+        draw.text((x, y), "Item", font=f_mono, fill=(0, 0, 0))
+        draw.text((x + 320, y), "Qty", font=f_mono, fill=(0, 0, 0))
+        draw.text((x + 380, y), "Price", font=f_mono, fill=(0, 0, 0))
+        draw.text((x + 480, y), "Total", font=f_mono, fill=(0, 0, 0))
+        y += 18
+        draw.line((x, y, width - x, y), fill=(230, 230, 230), width=1)
+        y += 8
+
+        # Items
+        for it in items_data:
+            name = it.get('name')[:35]
+            qty = str(it.get('quantity'))
+            price = f"{it.get('unit_price'):.2f}"
+            total = f"{it.get('line_total'):.2f}"
+            draw.text((x, y), name, font=f_mono, fill=(20, 20, 20))
+            draw.text((x + 320, y), qty, font=f_mono, fill=(20, 20, 20))
+            draw.text((x + 380, y), price, font=f_mono, fill=(20, 20, 20))
+            draw.text((x + 480, y), total, font=f_mono, fill=(20, 20, 20))
+            y += line_h
+
+        y += 10
+        draw.line((x, y, width - x, y), fill=(200, 200, 200), width=1)
+        y += 12
+
+        # Totals
+        draw.text((x + 340, y), "Subtotal:", font=f_body, fill=(0, 0, 0))
+        draw.text((x + 480, y), f"{order_data.get('subtotal'):.2f}", font=f_body, fill=(0, 0, 0))
+        y += 24
+        draw.text((x + 340, y), f"VAT ({int(VAT_RATE*100)}%):", font=f_body, fill=(0, 0, 0))
+        draw.text((x + 480, y), f"{order_data.get('vat_amount'):.2f}", font=f_body, fill=(0, 0, 0))
+        y += 28
+        draw.text((x + 340, y), "TOTAL:", font=f_head, fill=(0, 0, 0))
+        draw.text((x + 480, y), f"{order_data.get('total_amount'):.2f}", font=f_head, fill=(0, 100, 0))
+        y += 44
+
+        # Payment / Footer
+        draw.text((x, y), f"Payment: {order_data.get('payment_method')}", font=f_body, fill=(0, 0, 0))
+        y += 22
+        draw.text((x, y), "Thank you for shopping at QuickStop!", font=f_sub, fill=(80, 80, 80))
+        y += 22
+        draw.text((x, y), "Visit again.", font=f_sub, fill=(80, 80, 80))
+
+        # Save PNG
         try:
-            fnt_head = ImageFont.truetype("arial.ttf", 20)
-            fnt_body = ImageFont.truetype("arial.ttf", 12)
-        except:
-            fnt_head = ImageFont.load_default()
-            fnt_body = ImageFont.load_default()
+            img.save(png_path)
+        except Exception:
+            # Fallback: save smaller image
+            img_small = img.resize((int(width * 0.7), int(height * 0.7)))
+            img_small.save(png_path)
 
-        d.text((10,10), "QuickStop Receipt", font=fnt_head, fill=(0,0,0))
-        d.text((10,40), f"Order: {order_data['order_number']}", font=fnt_body, fill=(0,0,0))
-        d.text((10,60), f"Total: {order_data['total_amount']:.2f}", font=fnt_head, fill=(0,0,0))
-        img.save(png_path)
-
-        return pdf_path, png_path
+        return png_path
