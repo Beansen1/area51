@@ -182,7 +182,7 @@ class AttractScreen(QWidget):
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
         
-        title = QLabel("QuickStop")
+        title = QLabel("Dale")
         title.setObjectName("AttractTitle")
         title.setAlignment(Qt.AlignCenter)
         
@@ -434,10 +434,6 @@ class PaymentDialog(QDialog):
         self.rb_cash = QRadioButton("Cash")
         self.rb_cash.setChecked(True)
         self.rb_cash.setStyleSheet("font-size: 18pt;")
-        
-        self.rb_card = QRadioButton("Cashless (Card/QR)")
-        self.rb_card.setStyleSheet("font-size: 18pt;")
-        
         self.input_cash = QLineEdit()
         self.input_cash.setPlaceholderText("Enter Cash Amount")
         self.input_cash.setStyleSheet("font-size: 18pt; padding: 10px;")
@@ -451,7 +447,6 @@ class PaymentDialog(QDialog):
         
         layout.addWidget(lbl_info)
         layout.addWidget(self.rb_cash)
-        layout.addWidget(self.rb_card)
         layout.addWidget(self.input_cash)
         layout.addSpacing(20)
         layout.addWidget(self.btn_pay)
@@ -459,56 +454,20 @@ class PaymentDialog(QDialog):
         self.setLayout(layout)
         
     def validate(self):
-        method = "CASH" if self.rb_cash.isChecked() else "CASHLESS"
         cash_given = 0.0
         
-        if method == "CASH":
-            try:
-                cash_given = float(self.input_cash.text())
-                if cash_given < self.total:
-                    QMessageBox.warning(self, "Error", "Insufficient cash.")
-                    return
-            except ValueError:
-                QMessageBox.warning(self, "Error", "Invalid amount.")
+        try:
+            cash_given = float(self.input_cash.text())
+            if cash_given < self.total:
+                QMessageBox.warning(self, "Error", "Insufficient cash.")
                 return
-        else:
-            # Cashless flow: show a QR placeholder and start a 10s countdown that auto-completes
-            cash_given = self.total
-            # Build a small QR dialog inside this dialog
-            qr_dlg = QDialog(self)
-            qr_dlg.setWindowTitle('Scan QR Code')
-            qr_dlg.setModal(True)
-            qr_layout = QVBoxLayout()
-            lbl = QLabel()
-            lbl.setAlignment(Qt.AlignCenter)
-            # Create a placeholder pixmap with text (simple)
-            pix = QPixmap(200,200)
-            pix.fill(Qt.white)
-            lbl.setPixmap(pix)
-            countdown_lbl = QLabel("Waiting for payment... 10s")
-            countdown_lbl.setAlignment(Qt.AlignCenter)
-            qr_layout.addWidget(lbl)
-            qr_layout.addWidget(countdown_lbl)
-            qr_dlg.setLayout(qr_layout)
-
-            # Timer to simulate payment confirmation
-            counter = {'n': 10}
-            timer = QTimer(qr_dlg)
-            def _tick():
-                counter['n'] -= 1
-                if counter['n'] <= 0:
-                    timer.stop()
-                    qr_dlg.accept()
-                else:
-                    countdown_lbl.setText(f"Waiting for payment... {counter['n']}s")
-
-            timer.timeout.connect(_tick)
-            timer.start(1000)
-            qr_dlg.exec_()
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Invalid amount.")
+            return
 
         # After either flow completes, set payment_data and accept
         self.payment_data = {
-            'method': method,
+            'method': 'CASH',
             'cash_given': cash_given,
             'change': cash_given - self.total
         }
@@ -516,7 +475,7 @@ class PaymentDialog(QDialog):
 
 
 class ReceiptDialog(QDialog):
-    def __init__(self, pdf_path=None, png_path=None):
+    def __init__(self, png_path=None):
         super().__init__()
         self.setWindowTitle("Receipt")
         self.setMinimumSize(420, 640)
@@ -535,22 +494,10 @@ class ReceiptDialog(QDialog):
             layout.addWidget(QLabel("Receipt preview not available"))
 
         btns = QHBoxLayout()
-        btn_open = QPushButton("Open PDF")
         btn_close = QPushButton("Close")
-        btns.addWidget(btn_open)
         btns.addWidget(btn_close)
         layout.addLayout(btns)
 
-        def _open_pdf():
-            if pdf_path and os.path.exists(pdf_path):
-                try:
-                    os.startfile(pdf_path)
-                except Exception:
-                    QMessageBox.information(self, "Open", f"PDF located at: {pdf_path}")
-            else:
-                QMessageBox.warning(self, "Not found", "PDF not available")
-
-        btn_open.clicked.connect(_open_pdf)
         btn_close.clicked.connect(self.accept)
         self.setLayout(layout)
 

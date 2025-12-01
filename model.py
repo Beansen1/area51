@@ -2,6 +2,15 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 from datetime import datetime
 
+# Optional: use the `qrcode` library if available. If not installed, we'll
+# fall back to drawing the order number as text in a box instead of a scannable QR.
+try:
+    import qrcode
+    _HAS_QRCODE = True
+except Exception:
+    qrcode = None
+    _HAS_QRCODE = False
+
 VAT_RATE = 0.12
 
 
@@ -105,6 +114,41 @@ class ReceiptGenerator:
         draw.text((x, y), "Thank you for shopping at QuickStop!", font=f_sub, fill=(80, 80, 80))
         y += 22
         draw.text((x, y), "Visit again.", font=f_sub, fill=(80, 80, 80))
+
+        # QR Code: encode the order number so scanning shows the order id
+        qr_size = 140
+        qr_margin = 20
+        qr_img = None
+        order_id_text = str(order_data.get('order_number') or '')
+        if order_id_text:
+            try:
+                if _HAS_QRCODE:
+                    qr = qrcode.QRCode(box_size=4, border=2)
+                    qr.add_data(order_id_text)
+                    qr.make(fit=True)
+                    qr_img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
+                    qr_img = qr_img.resize((qr_size, qr_size), Image.NEAREST)
+                else:
+                    # Fallback: create a simple boxed area with the order id as text
+                    qr_img = Image.new('RGB', (qr_size, qr_size), color=(255, 255, 255))
+                    qd = ImageDraw.Draw(qr_img)
+                    qd.rectangle((0, 0, qr_size - 1, qr_size - 1), outline=(0, 0, 0), width=2)
+                    # center the order text
+                    ft = ReceiptGenerator._load_font(12)
+                    txt = order_id_text
+                    tw, th = qd.textsize(txt, font=ft)
+                    qd.text(((qr_size - tw) / 2, (qr_size - th) / 2), txt, font=ft, fill=(0, 0, 0))
+            except Exception:
+                qr_img = None
+
+        if qr_img is not None:
+            try:
+                # paste QR at bottom-right above footer area
+                px = width - qr_size - qr_margin
+                py = height - qr_size - qr_margin
+                img.paste(qr_img, (px, py))
+            except Exception:
+                pass
 
         # Save PNG
         try:

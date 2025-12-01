@@ -34,9 +34,11 @@ class MainController(QMainWindow):
         
         self.setCentralWidget(self.stack)
         
-        # Idle Timer (30s)
+        # Idle Timer (60s)
+        # Centralized timeout value (milliseconds) so it's easy to adjust
+        self.idle_timeout_ms = 60000
         self.idle_timer = QTimer()
-        self.idle_timer.setInterval(30000)
+        self.idle_timer.setInterval(self.idle_timeout_ms)
         self.idle_timer.timeout.connect(self.reset_to_attract)
         self.idle_timer.start()
         
@@ -65,7 +67,8 @@ class MainController(QMainWindow):
         self.load_items()
 
     def reset_timer(self):
-        self.idle_timer.start(30000)
+        # Restart using centralized timeout value
+        self.idle_timer.start(self.idle_timeout_ms)
 
     # --- NAV ---
     def reset_to_attract(self):
@@ -266,7 +269,7 @@ class MainController(QMainWindow):
             # Show receipt dialog (png preview)
             try:
                 from view import ReceiptDialog
-                dlg = ReceiptDialog(pdf_path=None, png_path=png)
+                dlg = ReceiptDialog(png_path=png)
                 dlg.exec_()
             except Exception:
                 pass
@@ -298,9 +301,12 @@ class MainController(QMainWindow):
             if not row:
                 QMessageBox.warning(self, "Login Failed", "User not found or inactive")
                 return
-            # Verify password
-            from passlib.hash import bcrypt
-            if not bcrypt.verify(password, row['password_hash']):
+            # Verify password using a CryptContext that supports pbkdf2_sha256 and bcrypt.
+            # This allows seeded passwords to use pbkdf2_sha256 while still being
+            # able to verify existing bcrypt hashes if present.
+            from passlib.context import CryptContext
+            pwd_ctx = CryptContext(schemes=['pbkdf2_sha256', 'bcrypt'], default='pbkdf2_sha256', deprecated='auto')
+            if not pwd_ctx.verify(password, row['password_hash']):
                 QMessageBox.warning(self, "Login Failed", "Invalid credentials")
                 return
 
