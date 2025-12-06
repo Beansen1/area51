@@ -13,6 +13,14 @@ from datavisualization import VizPanel
 import os
 import base64
 
+
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.clicked.emit()
+
 # --- CUSTOM WIDGETS ---
 
 class ProductTile(QFrame):
@@ -48,20 +56,26 @@ class ProductTile(QFrame):
         name_lbl = QLabel(item_data['name'])
         name_lbl.setObjectName("ProductName")
         name_lbl.setWordWrap(True)
+        name_lbl.setAlignment(Qt.AlignCenter)
         
         price_lbl = QLabel(f"₱ {item_data['price']:,.2f}")
         price_lbl.setObjectName("ProductPrice")
+        price_lbl.setAlignment(Qt.AlignCenter)
         
         stock_lbl = QLabel(f"Stock: {self.stock}")
         stock_lbl.setObjectName("ProductStock")
+        stock_lbl.setAlignment(Qt.AlignCenter)
         
         info_layout.addWidget(name_lbl)
         info_layout.addWidget(price_lbl)
         info_layout.addWidget(stock_lbl)
+        info_layout.setAlignment(Qt.AlignHCenter)
         
         layout.addWidget(self.img_lbl)
         layout.addLayout(info_layout)
         self.setLayout(layout)
+        # center the overall contents within the tile
+        layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
         # Load image if provided. Support: filesystem path, data-uri/base64 text, or BLOB bytes.
         img_pix = None
@@ -101,17 +115,60 @@ class ProductTile(QFrame):
                     except Exception:
                         pass
                 else:
-                    # Treat as filesystem path
-                    if os.path.exists(img_path):
-                        pix = QPixmap(img_path)
-                        if not pix.isNull():
-                            img_pix = pix
+                    # Treat as filesystem path. Try multiple candidate resolutions:
+                    # 1) absolute path as given
+                    # 2) path relative to this module (so launching from different cwd still works)
+                    # 3) path under project `assets/images/` using basename
+                    # 4) cwd-relative path and cwd `assets/images/` fallback
+                    try:
+                        base_dir = os.path.dirname(os.path.abspath(__file__))
+                    except Exception:
+                        base_dir = os.getcwd()
+
+                    # Normalize file:// style URIs
+                    pth = img_path
+                    if isinstance(pth, str) and pth.startswith('file://'):
+                        pth = pth[7:]
+
+                    candidates = []
+                    if os.path.isabs(pth):
+                        candidates.append(pth)
                     else:
-                        alt = os.path.join('assets', 'images', os.path.basename(img_path))
-                        if os.path.exists(alt):
-                            pix = QPixmap(alt)
-                            if not pix.isNull():
-                                img_pix = pix
+                        candidates.append(os.path.join(base_dir, pth))
+                        candidates.append(os.path.join(base_dir, 'assets', 'images', os.path.basename(pth)))
+                        candidates.append(os.path.join(os.getcwd(), pth))
+                        candidates.append(os.path.join(os.getcwd(), 'assets', 'images', os.path.basename(pth)))
+
+                    for cp in candidates:
+                        try:
+                            if not cp:
+                                continue
+                            # normalize and try absolute candidate path
+                            cp_norm = os.path.normpath(cp)
+                            if not os.path.isabs(cp_norm):
+                                cp_norm = os.path.abspath(cp_norm)
+
+                            if os.path.exists(cp_norm):
+                                # First, try loading directly from file path
+                                try:
+                                    pix = QPixmap(cp_norm)
+                                    if pix is not None and not pix.isNull():
+                                        img_pix = pix
+                                        break
+                                except Exception:
+                                    pass
+                                # Fallback: read raw bytes and load from data
+                                try:
+                                    with open(cp_norm, 'rb') as _f:
+                                        raw = _f.read()
+                                    pix2 = QPixmap()
+                                    if pix2.loadFromData(raw):
+                                        img_pix = pix2
+                                        break
+                                except Exception:
+                                    pass
+                        except Exception:
+                            continue
             except Exception:
                 pass
 
@@ -146,7 +203,14 @@ class ProductTile(QFrame):
         if img_pix is not None:
             self._pixmap = img_pix
             try:
-                scaled = img_pix.scaled(self.img_lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                # If the label size hasn't been set yet (e.g. before layout/show),
+                # scale to a reasonable fallback height (max height) so the image is visible.
+                lbl_size = self.img_lbl.size()
+                if lbl_size.width() <= 0 or lbl_size.height() <= 0:
+                    target_h = self.img_lbl.maximumHeight() if self.img_lbl.maximumHeight() > 0 else 160
+                    scaled = img_pix.scaledToHeight(target_h, Qt.SmoothTransformation)
+                else:
+                    scaled = img_pix.scaled(lbl_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.img_lbl.setPixmap(scaled)
                 self.img_lbl.setText("")
             except Exception:
@@ -181,22 +245,37 @@ class AttractScreen(QWidget):
         self.setObjectName("AttractScreen")
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
-        
-        title = QLabel("Dale")
-        title.setObjectName("AttractTitle")
-        title.setAlignment(Qt.AlignCenter)
-        
-        sub = QLabel("Freshness at your fingertips")
-        sub.setStyleSheet("color: #BDC3C7; font-size: 24pt;")
-        sub.setAlignment(Qt.AlignCenter)
-        
+        # Replace the text title/subtitle with a centered logo image when available
+        logo_lbl = QLabel()
+        logo_lbl.setObjectName("AttractLogo")
+        logo_lbl.setAlignment(Qt.AlignCenter)
+        # Try to load the project's logo; fall back to text if missing
+        try:
+            # Prefer path relative to this file so the logo loads regardless of working directory
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logo_path = os.path.join(base_dir, 'assets', 'images', 'DaleT.png')
+            # Fallback to cwd-relative if not found
+            if not os.path.exists(logo_path):
+                logo_path = os.path.join(os.getcwd(), 'assets', 'images', 'DaleT.png')
+            if os.path.exists(logo_path):
+                pm = QPixmap(logo_path)
+                if not pm.isNull():
+                    # scale to a reasonable width for attract screen
+                    scaled = pm.scaledToWidth(420, Qt.SmoothTransformation)
+                    logo_lbl.setPixmap(scaled)
+                else:
+                    logo_lbl.setText('Dale')
+            else:
+                logo_lbl.setText('Dale')
+        except Exception:
+            logo_lbl.setText('Dale')
+
         btn = QPushButton("TAP TO START ORDER")
         btn.setObjectName("AttractBtn")
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(self.start_clicked.emit)
         
-        layout.addWidget(title)
-        layout.addWidget(sub)
+        layout.addWidget(logo_lbl)
         layout.addSpacing(50)
         layout.addWidget(btn)
         self.setLayout(layout)
@@ -212,6 +291,8 @@ class KioskMain(QWidget):
     # Cart signals
     remove_item = pyqtSignal(int)
     update_qty = pyqtSignal(int, int) # item_id, change (+1/-1)
+    clear_cart_requested = pyqtSignal()
+    undo_requested = pyqtSignal()
     
     def __init__(self):
         super().__init__()
@@ -229,16 +310,72 @@ class KioskMain(QWidget):
         self.search_input.setPlaceholderText("Search items...")
         self.search_input.setMinimumHeight(50)
         self.search_input.textChanged.connect(self.search_query.emit)
-        
-        btn_insights = QPushButton("Insights")
-        btn_insights.clicked.connect(self.insights_clicked.emit)
+
+        # Add small logo to the left of the search input
+        search_container = QWidget()
+        search_h = QHBoxLayout()
+        search_h.setContentsMargins(6, 0, 6, 0)
+        search_h.setSpacing(8)
+        self.search_logo = ClickableLabel()
+        self.search_logo.setFixedSize(36, 36)
+        # Try to load logo relative to this file; fallback to cwd
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logo_path = os.path.join(base_dir, 'assets', 'images', 'DaleT.png')
+            if not os.path.exists(logo_path):
+                logo_path = os.path.join(os.getcwd(), 'assets', 'images', 'DaleT.png')
+            if os.path.exists(logo_path):
+                pm = QPixmap(logo_path)
+                if not pm.isNull():
+                    scaled = pm.scaled(self.search_logo.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.search_logo.setPixmap(scaled)
+        except Exception:
+            pass
+
+        search_h.addWidget(self.search_logo)
+        search_h.addWidget(self.search_input, 1)
+        search_container.setLayout(search_h)
+        search_container.setObjectName("SearchContainer")
+        # style to match theme: white background, subtle border and rounded corners
+        try:
+            search_container.setStyleSheet("background-color: #ffffff; border: 1px solid #e6e1d8; border-radius: 8px;")
+        except Exception:
+            pass
+
+        # Triple-click on logo opens admin login; count resets after 1.5s
+        self._logo_clicks = 0
+        self._logo_click_timer = QTimer(self)
+        self._logo_click_timer.setSingleShot(True)
+        self._logo_click_timer.setInterval(1500)
+        def _reset_logo_clicks():
+            self._logo_clicks = 0
+        self._logo_click_timer.timeout.connect(_reset_logo_clicks)
+
+        def _on_logo_clicked():
+            try:
+                self._logo_clicks += 1
+                self._logo_click_timer.start()
+                if self._logo_clicks >= 3:
+                    # reset counter and emit admin signal
+                    self._logo_clicks = 0
+                    self._logo_click_timer.stop()
+                    self.admin_clicked.emit()
+            except Exception:
+                pass
+
+        self.search_logo.setCursor(Qt.PointingHandCursor)
+        self.search_logo.clicked.connect(_on_logo_clicked)
         
         btn_admin = QPushButton("Admin")
         btn_admin.clicked.connect(self.admin_clicked.emit)
+        # Hide visible admin button; access via triple-click logo instead
+        try:
+            btn_admin.hide()
+        except Exception:
+            pass
         
-        top_layout.addWidget(QLabel("<b>QuickStop</b>"))
-        top_layout.addWidget(self.search_input, 1)
-        top_layout.addWidget(btn_insights)
+        # app title removed from top bar (keeps UI minimal)
+        top_layout.addWidget(search_container, 1)
         top_layout.addWidget(btn_admin)
         top_bar.setLayout(top_layout)
         
@@ -310,11 +447,26 @@ class KioskMain(QWidget):
         self.btn_checkout.setObjectName("CheckoutBtn")
         self.btn_checkout.clicked.connect(self.checkout_requested.emit)
         
+        # Extra controls above checkout: Clear cart and Undo
+        btn_row = QHBoxLayout()
+        self.btn_clear = QPushButton("Clear Cart")
+        self.btn_clear.setObjectName("ClearCartBtn")
+        self.btn_clear.setToolTip("Clear all items from the cart")
+        self.btn_undo = QPushButton("Undo")
+        self.btn_undo.setObjectName("UndoBtn")
+        self.btn_undo.setToolTip("Undo last cart change")
+        btn_row.addWidget(self.btn_clear)
+        btn_row.addWidget(self.btn_undo)
+        # Connect to signals that the controller listens to
+        self.btn_clear.clicked.connect(self.clear_cart_requested.emit)
+        self.btn_undo.clicked.connect(self.undo_requested.emit)
+        
         cart_layout.addWidget(lbl_cart)
         cart_layout.addWidget(self.cart_table)
         cart_layout.addWidget(self.lbl_subtotal)
         cart_layout.addWidget(self.lbl_vat)
         cart_layout.addWidget(self.lbl_total)
+        cart_layout.addLayout(btn_row)
         cart_layout.addWidget(self.btn_checkout)
         self.cart_panel.setLayout(cart_layout)
         
@@ -327,23 +479,37 @@ class KioskMain(QWidget):
 
     def populate_categories(self, categories):
         # Clear existing
-        for i in range(self.cat_layout.count()): 
-            self.cat_layout.itemAt(i).widget().setParent(None)
-            
+        self.cat_btns = [] # Store references to all category buttons
+
         all_btn = QPushButton("All")
         all_btn.setCheckable(True)
         all_btn.setChecked(True)
         all_btn.setObjectName("CategoryBtn")
-        all_btn.clicked.connect(lambda: self.category_selected.emit(0))
+        def _on_all_clicked():
+            for btn in self.cat_btns:
+                if btn is not all_btn:
+                    btn.setChecked(False)
+            self.category_selected.emit(0)
+        all_btn.clicked.connect(_on_all_clicked)
         self.cat_layout.addWidget(all_btn)
-        
-        self.cat_btns = [all_btn]
+        self.cat_btns.append(all_btn)
         
         for cat in categories:
             btn = QPushButton(cat['name'])
             btn.setCheckable(True)
             btn.setObjectName("CategoryBtn")
-            btn.clicked.connect(lambda ch, cid=cat['id']: self.category_selected.emit(cid))
+            def _on_cat_clicked(checked, current_btn=btn, cid=cat['id']): # Pass `checked` argument
+                if checked:
+                    for other_btn in self.cat_btns:
+                        if other_btn is not current_btn:
+                            other_btn.setChecked(False)
+                    self.category_selected.emit(cid)
+                else:
+                    # Prevent unchecking if it's the only one checked
+                    if all(not b.isChecked() for b in self.cat_btns if b is not current_btn):
+                        current_btn.setChecked(True)
+
+            btn.clicked.connect(_on_cat_clicked)
             self.cat_layout.addWidget(btn)
             self.cat_btns.append(btn)
 
@@ -396,7 +562,9 @@ class KioskMain(QWidget):
             btn_minus.setFixedSize(36,36)
             btn_minus.clicked.connect(lambda ch, i=item['id']: self.update_qty.emit(i, -1))
             lbl_q = QLabel(str(item['quantity']))
-            lbl_q.setFixedWidth(40)
+            # allow the quantity label to expand if needed instead of clipping
+            lbl_q.setMinimumWidth(40)
+            lbl_q.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             lbl_q.setAlignment(Qt.AlignCenter)
             btn_plus = QPushButton("+")
             btn_plus.setFixedSize(36,36)
@@ -417,6 +585,15 @@ class KioskMain(QWidget):
         self.lbl_subtotal.setText(f"Subtotal: ₱ {totals['subtotal']:,.2f}")
         self.lbl_vat.setText(f"VAT (12%): ₱ {totals['vat']:,.2f}")
         self.lbl_total.setText(f"Total: ₱ {totals['total']:,.2f}")
+
+        # Improve readability: allow wrapping and ensure rows are tall enough
+        try:
+            self.cart_table.setWordWrap(True)
+            for r in range(self.cart_table.rowCount()):
+                # give a comfortable minimum row height to avoid clipped text
+                self.cart_table.setRowHeight(r, max(48, self.cart_table.rowHeight(r)))
+        except Exception:
+            pass
 
 class PaymentDialog(QDialog):
     def __init__(self, total_amount):
@@ -478,28 +655,56 @@ class ReceiptDialog(QDialog):
     def __init__(self, png_path=None):
         super().__init__()
         self.setWindowTitle("Receipt")
-        self.setMinimumSize(420, 640)
+        # Use a smaller default and minimum size so dialog isn't too large
+        self.setMinimumSize(420, 560)
+        self.resize(520, 720)
+
+        self._orig_pixmap = None
+
         layout = QVBoxLayout()
 
         if png_path and os.path.exists(png_path):
-            lbl = QLabel()
+
+            self.lbl = QLabel()
+            self.lbl.setAlignment(Qt.AlignCenter)
             pm = QPixmap(png_path)
             if not pm.isNull():
-                scaled = pm.scaled(380, 520, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                lbl.setPixmap(scaled)
+                self._orig_pixmap = pm
+                # initial fit to dialog — smaller target so it doesn't dominate the screen
+                scaled = pm.scaled(min(self.width() - 40, 640), min(self.height() - 140, 900), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.lbl.setPixmap(scaled)
             else:
-                lbl.setText("Receipt preview not available")
-            layout.addWidget(lbl)
+                self.lbl.setText("Receipt preview not available")
+
+            # Put label inside a scroll area so very tall receipts can still be scrolled
+            from PyQt5.QtWidgets import QScrollArea
+            sa = QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setWidget(self.lbl)
+            layout.addWidget(sa)
         else:
             layout.addWidget(QLabel("Receipt preview not available"))
 
         btns = QHBoxLayout()
         btn_close = QPushButton("Close")
+        btns.addStretch()
         btns.addWidget(btn_close)
         layout.addLayout(btns)
 
         btn_close.clicked.connect(self.accept)
         self.setLayout(layout)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Rescale preview to fit dialog when resized
+        try:
+            if getattr(self, '_orig_pixmap', None) is not None and not self._orig_pixmap.isNull():
+                w = max(100, self.width() - 40)
+                h = max(100, self.height() - 140)
+                scaled = self._orig_pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.lbl.setPixmap(scaled)
+        except Exception:
+            pass
 
 # VizPanel moved to `datavisualization.py` and imported above
 
@@ -508,6 +713,7 @@ class AdminLoginDialog(QDialog):
     """Simple admin login dialog. Returns username/password on accept."""
     def __init__(self):
         super().__init__()
+        self.setObjectName("AdminLoginDialog") # Add object name
         self.setWindowTitle("Admin Login")
         self.setFixedSize(360, 200)
         layout = QVBoxLayout()
@@ -627,6 +833,8 @@ class AdminPanel(QWidget):
     adjust_stock = pyqtSignal(int, int)  # item_id, new_stock
     back_clicked = pyqtSignal()
     exit_clicked = pyqtSignal()
+    insights_clicked = pyqtSignal()
+    search_query = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -638,8 +846,11 @@ class AdminPanel(QWidget):
         # Top row: navigation
         top_nav = QHBoxLayout()
         self.btn_back = QPushButton("Back to Kiosk")
+        btn_insights = QPushButton("Insights")
+        btn_insights.clicked.connect(self.insights_clicked.emit)
         self.btn_exit = QPushButton("Exit App")
         top_nav.addWidget(self.btn_back)
+        top_nav.addWidget(btn_insights)
         top_nav.addWidget(self.btn_exit)
         top_nav.addStretch()
 
@@ -649,9 +860,18 @@ class AdminPanel(QWidget):
         self.btn_edit = QPushButton("Edit Selected")
         self.btn_del = QPushButton("Delete Selected")
         self.btn_refresh = QPushButton("Refresh")
+        # Admin search box
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText('Search items...')
+        self.search_input.setFixedWidth(240)
+        self.btn_search = QPushButton('Search')
+        self.btn_clear_search = QPushButton('Clear')
         ctrl.addWidget(self.btn_add)
         ctrl.addWidget(self.btn_edit)
         ctrl.addWidget(self.btn_del)
+        ctrl.addWidget(self.search_input)
+        ctrl.addWidget(self.btn_search)
+        ctrl.addWidget(self.btn_clear_search)
         ctrl.addStretch()
         ctrl.addWidget(self.btn_refresh)
 
@@ -659,7 +879,25 @@ class AdminPanel(QWidget):
         # Add an extra column for stock adjustment controls
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(["ID", "Name", "Price", "Stock", "Category", "Image", "Adjust"])
+        # Resize modes: keep name column flexible, other columns sized to contents
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        # Ensure the Adjust column has a sane default width so the Set button isn't clipped
+        try:
+            self.table.setColumnWidth(6, 180)
+        except Exception:
+            pass
+        # Make table text and rows slightly larger for readability
+        try:
+            self.table.setStyleSheet("font-size: 11pt;")
+            self.table.verticalHeader().setDefaultSectionSize(56)
+        except Exception:
+            pass
 
         layout.addLayout(top_nav)
         layout.addLayout(ctrl)
@@ -670,6 +908,9 @@ class AdminPanel(QWidget):
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_del.clicked.connect(self._on_delete)
         self.btn_refresh.clicked.connect(self.refresh)
+        self.btn_search.clicked.connect(lambda: self.search_query.emit(self.search_input.text().strip()))
+        self.search_input.returnPressed.connect(lambda: self.search_query.emit(self.search_input.text().strip()))
+        self.btn_clear_search.clicked.connect(self._clear_search)
         self.btn_back.clicked.connect(self.back_clicked.emit)
         self.btn_exit.clicked.connect(self.exit_clicked.emit)
 
@@ -690,7 +931,8 @@ class AdminPanel(QWidget):
             # Show whether an image blob exists
             has_image = False
             try:
-                has_image = bool(it.get('image'))
+                # Support both `image` BLOB field (older schema) and `image_path` text field
+                has_image = bool(it.get('image')) or bool(it.get('image_path'))
             except Exception:
                 has_image = False
             self.table.setItem(row, 5, QTableWidgetItem('Yes' if has_image else 'No'))
@@ -705,9 +947,15 @@ class AdminPanel(QWidget):
                 sb.setValue(int(it.get('stock') or 0))
             except Exception:
                 sb.setValue(0)
-            sb.setFixedWidth(80)
+            # Slightly narrower spinbox so the Set button fits comfortably
+            # Slightly wider spinbox so numbers are readable
+            sb.setFixedWidth(88)
             btn_set = QPushButton('Set')
-            btn_set.setFixedHeight(28)
+            # Larger Set button for readability
+            btn_set.setFixedSize(88, 34)
+            btn_set.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            # Small spacing for the adjust layout so controls don't appear cramped
+            adj_l.setSpacing(8)
             adj_l.addWidget(sb)
             adj_l.addWidget(btn_set)
             adj_w.setLayout(adj_l)
@@ -726,7 +974,14 @@ class AdminPanel(QWidget):
             btn_set.clicked.connect(_make_set_handler(item_id, sb))
 
             self.table.setCellWidget(row, 6, adj_w)
-
+        # Make sure text isn't clipped: allow wrapping and ensure reasonable row heights
+        try:
+            self.table.setWordWrap(True)
+            self.table.resizeRowsToContents()
+            for r in range(self.table.rowCount()):
+                self.table.setRowHeight(r, max(56, self.table.rowHeight(r)))
+        except Exception:
+            pass
     def _selected_id(self):
         sel = self.table.currentRow()
         if sel < 0:
@@ -785,3 +1040,11 @@ class AdminPanel(QWidget):
     def refresh(self):
         # Controller should repopulate by calling populate_items
         pass
+
+    def _clear_search(self):
+        try:
+            self.search_input.clear()
+            # emit empty search to let controller reload full list
+            self.search_query.emit('')
+        except Exception:
+            pass
