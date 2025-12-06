@@ -51,10 +51,12 @@ class VizPanel(QWidget):
         self.chart1 = FigureCanvas(plt.Figure(figsize=(5, 3)))
         self.chart2 = FigureCanvas(plt.Figure(figsize=(5, 3)))
         self.chart3 = FigureCanvas(plt.Figure(figsize=(5, 3)))
+        self.chart4 = FigureCanvas(plt.Figure(figsize=(5, 3)))
 
         tabs.addTab(self.chart1, "Daily Sales")
         tabs.addTab(self.chart2, "Top Items")
         tabs.addTab(self.chart3, "Contribution")
+        tabs.addTab(self.chart4, "Weekday Avg")
 
         layout.addLayout(controls)
         layout.addWidget(tabs)
@@ -146,6 +148,53 @@ class VizPanel(QWidget):
             self.chart1.draw()
             self.chart2.draw()
             self.chart3.draw()
+            # Weekday average: compute average orders per weekday across the selected range
+            try:
+                # parse start/end into date objects and compute span in days (inclusive)
+                from datetime import datetime
+                sd = datetime.strptime(start, "%Y-%m-%d").date()
+                ed = datetime.strptime(end, "%Y-%m-%d").date()
+                span_days = (ed - sd).days + 1
+
+                # number of weeks in the span (as fractional weeks). We divide totals by this value
+                # to get average orders per week for each weekday.
+                weeks = float(span_days) / 7.0
+                if weeks <= 0:
+                    weeks = 1.0
+
+                # Query counts grouped by weekday using strftime('%w') where Sunday=0..Saturday=6
+                qd = """
+                SELECT strftime('%w', order_datetime) as dow, COUNT(*) as cnt
+                FROM orders
+                WHERE order_datetime BETWEEN ? AND ?
+                GROUP BY dow
+                """
+                rowsd = conn.execute(qd, (start_ts, end_ts)).fetchall()
+                counts = {int(r['dow']): r['cnt'] for r in rowsd}
+
+                # Build per-week averages Monday->Sunday
+                order = [1,2,3,4,5,6,0]
+                labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+                avgs = []
+                for w in order:
+                    cnt = counts.get(w, 0)
+                    avg = float(cnt) / weeks
+                    avgs.append(avg)
+
+                fig4 = self.chart4.figure
+                fig4.clear()
+                ax4 = fig4.add_subplot(111)
+                ax4.bar(labels, avgs, color='#ff7f0e')
+                ax4.set_title('Average Orders per Day of Week')
+                ax4.set_ylabel('Average Orders')
+                ax4.set_xlabel('Weekday')
+            except Exception:
+                fig4 = self.chart4.figure
+                fig4.clear()
+                ax4 = fig4.add_subplot(111)
+                ax4.text(0.5, 0.5, 'No data for weekday averages', ha='center', va='center')
+
+            self.chart4.draw()
         except Exception as e:
             try:
                 conn.close()
