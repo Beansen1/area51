@@ -231,7 +231,7 @@ def seed():
     # Hash using CryptContext so we avoid initializing the bcrypt backend at seed time
     # (some environments have an incompatible `bcrypt` module that causes passlib
     # to raise during backend auto-detection). pbkdf2_sha256 is a safe default.
-    pw = pwd_ctx.hash("change_me")
+    pw = pwd_ctx.hash("Daley4rn")
     try:
         c.execute("INSERT INTO users (username, password_hash, role) VALUES (?,?,?)", ("admin", pw, "admin"))
         c.execute("INSERT INTO users (username, password_hash, role) VALUES (?,?,?)", ("superadmin", pw, "super_admin"))
