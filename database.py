@@ -1,7 +1,10 @@
 import sqlite3
 import os
 
-DB_NAME = "sales_management.db"
+# Use a DB file located next to this module so the application uses a consistent
+# database file regardless of the current working directory when launched.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_NAME = os.path.join(BASE_DIR, "sales_management.db")
 
 class DatabaseManager:
     def __init__(self, db_name=DB_NAME):
@@ -56,6 +59,21 @@ class DatabaseManager:
             role TEXT NOT NULL,
             active INTEGER DEFAULT 1
         )''')
+        # Ensure persistent lockout/attempt columns exist so lockout can survive restarts
+        try:
+            existing = [r[1] for r in c.execute("PRAGMA table_info('users')").fetchall()]
+            if 'cred_attempts' not in existing:
+                try:
+                    c.execute('ALTER TABLE users ADD COLUMN cred_attempts INTEGER DEFAULT 0')
+                except Exception:
+                    pass
+            if 'locked_until' not in existing:
+                try:
+                    c.execute("ALTER TABLE users ADD COLUMN locked_until TEXT")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # Orders
         c.execute('''CREATE TABLE IF NOT EXISTS orders (
