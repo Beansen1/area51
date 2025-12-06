@@ -1,0 +1,172 @@
+/* Clean Dirty-White Theme for Dale */
+
+/* GLOBAL SETTINGS */
+QWidget {
+	font-family: 'Segoe UI', 'Segoe UI Semilight', Arial, sans-serif;
+	font-size: 12pt;
+	color: #222222; /* dark foreground for readability on light bg */
+	background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f7f5f2, stop:1 #f2efe9); /* dirty-white gradient */
+}
+
+/* Inputs (clean, subtle borders) */
+QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox {
+	background-color: #ffffff;
+	border: 1px solid #e6e1d8;
+	color: #222222;
+	padding: 6px;
+	border-radius: 6px;
+}
+
+/* Admin Login specific styles */
+#AdminLoginDialog QLineEdit {
+    background-color: transparent;
+    border: 1px solid #e6e1d8; /* retain subtle border */
+}
+
+/* ATTRACT SCREEN */
+#AttractScreen {
+	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f7f5f2, stop:1 #f2efe9);
+}
+#AttractTitle {
+	font-size: 64pt;
+	font-weight: 700;
+	color: #D63384; /* strong magenta title */
+	background: transparent;
+	padding: 0;
+	margin: 0;
+}
+
+#AttractSub {
+	font-size: 24pt;
+	color: #555555; /* dark subtitle for readability */
+	background: transparent;
+	padding: 0;
+	margin: 0;
+}
+#AttractBtn {
+	background-color: #D63384; /* magenta accent */
+	color: #FFFFFF; /* white text for contrast */
+	font-size: 22pt;
+	font-weight: 700;
+	border-radius: 16px;
+	padding: 14px 42px;
+}
+#AttractBtn:pressed { background-color: #B22B72; }
+
+/* TOP BAR */
+#TopBar {
+	background-color: rgba(0,0,0,0.02);
+	border-bottom: 1px solid #e9e6df;
+	padding: 8px;
+	color: #222222;
+}
+
+/* PRODUCT LISTING */
+#ProductTile {
+	background-color: #ffffff; /* card on dirty-white background */
+	border-radius: 12px;
+	border: 1px solid #e6e1d8;
+	color: #222222;
+}
+#ProductTile:hover {
+	border: 1px solid #D63384; /* magenta outline on hover */
+	background-color: #ffffff; /* subtle lift effect - Qt doesn't support box-shadow */
+}
+#ProductImage {
+	background: transparent;
+	border-top-left-radius: 12px;
+	border-top-right-radius: 12px;
+}
+#ProductName { font-weight: 600; font-size: 14pt; color: #222222; background: transparent; }
+#ProductPrice { color: #B22B72; font-weight: 700; font-size: 13pt; background: transparent; }
+#ProductStock { color: #666666; font-size: 10pt; background: transparent; }
+
+/* CART */
+#CartPanel {
+	background-color: #fbfaf8; /* slightly off-white */
+	border-left: 1px solid #e9e6df;
+	padding: 12px;
+	color: #222222;
+}
+QTableWidget {
+	border: none;
+	gridline-color: #f0ece6;
+	background: transparent;
+	color: #222222;
+}
+QHeaderView::section {
+	background-color: transparent;
+	padding: 6px;
+	border: none;
+	font-weight: 600;
+	color: #444444;
+}
+
+/* BUTTONS */
+QPushButton {
+	border-radius: 8px;
+	padding: 8px 12px;
+	background-color: #D63384; /* primary magenta button */
+	color: #FFFFFF;
+	font-weight: 600;
+	border: 1px solid #c92b78;
+}
+QPushButton:hover { background-color: #E14AA0; }
+QPushButton:pressed { background-color: #B22B72; }
+QPushButton:disabled { background-color: #e3d9de; color: #8f7f88; }
+
+QPushButton#CategoryBtn {
+	background-color: transparent;
+	color: #222222;
+	border: 1px solid #dcd8d1; /* subtle border for unselected */
+	border-radius: 8px;
+	padding: 8px 14px;
+}
+QPushButton#CategoryBtn:checked {
+	background-color: #D63384; 
+	color: #FFFFFF;
+	border: 1px solid #D63384; /* solid border for selected */
+	border-radius: 8px;
+}
+
+QPushButton#CategoryBtn:hover {
+	background-color: rgba(214,51,132,0.06);
+	border: 1px solid rgba(214,51,132,0.5);
+	border-radius: 8px;
+}
+
+QPushButton#CheckoutBtn {
+	background-color: #D63384; /* primary CTA magenta */
+	font-size: 16pt;
+	padding: 14px;
+	color: #FFFFFF;
+}
+QPushButton#CancelBtn { background-color: #D63384; color: #FFFFFF; }
+QPushButton#CancelBtn:hover { background-color: #E14AA0; }
+QPushButton#CancelBtn:pressed { background-color: #B22B72; }
+
+/* DIALOGS */
+QDialog {
+	background-color: #ffffff;
+	color: #222222;
+	border-radius: 8px;
+}
+
+/* Action-style buttons inside table rows */
+QPushButton[role="action"] {
+	min-width: 40px;
+	background-color: #D63384;
+	color: #fff;
+	border-radius: 6px;
+}
+QPushButton[role="action"]:hover { background-color: #E14AA0; }
+QPushButton[role="action"]:pressed { background-color: #B22B72; }
+
+/* Small accessibility tweaks */
+QLabel { color: #222222; }
+QTabWidget::pane { background: transparent; }
+
+/* Ensure focus outlines are visible (magenta tint) */
+*:focus { outline: 2px solid rgba(214,51,132,0.18); }
+
+/* End of theme */
