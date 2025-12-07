@@ -114,6 +114,16 @@ class DatabaseManager:
             FOREIGN KEY(item_id) REFERENCES items(id)
         )''')
 
+        # Audit logs for admin actions and login events
+        c.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            role TEXT,
+            event_type TEXT NOT NULL,
+            detail TEXT,
+            created_at TEXT NOT NULL
+        )''')
+
         conn.commit()
         conn.close()
 
