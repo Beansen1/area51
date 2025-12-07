@@ -17,6 +17,10 @@ Out of Scope:
 
 Before running make sure to input these in the terminal:
 
+python -m venv .venv
+
+.venv\\Scripts\\Activate.ps1
+
 python -m pip install --upgrade pip
 
 python -m pip install -r requirementsnito.txt
