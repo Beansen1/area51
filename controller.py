@@ -635,11 +635,66 @@ class MainController(QMainWindow):
                 QMessageBox.warning(self, "Locked", f"Admin login locked. Try again in {mins}m {secs}s")
                 return
 
-            pin, ok = QInputDialog.getText(self, "Admin PIN", "Enter admin PIN:", QLineEdit.Password)
-            if not ok:
+            # Require numeric-only PIN input. Use a masked input dialog that only accepts digits.
+            from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton
+            from PyQt5.QtGui import QIntValidator
+
+            class MaskedPinDialog(QDialog):
+                def __init__(self, parent=None):
+                    super().__init__(parent)
+                    self.setWindowTitle('Admin PIN')
+                    self.setFixedSize(360, 120)
+                    layout = QVBoxLayout()
+                    form = QFormLayout()
+                    self.input_pin = QLineEdit()
+                    self.input_pin.setEchoMode(QLineEdit.Password)
+                    self.input_pin.setValidator(QIntValidator(0, 99999999, self))
+                    self.input_pin.setMaxLength(4)
+                    form.addRow('Enter PIN:', self.input_pin)
+                    layout.addLayout(form)
+                    btn_row = QHBoxLayout()
+                    btn_row.addStretch()
+                    btn_ok = QPushButton('OK')
+                    btn_cancel = QPushButton('Cancel')
+                    btn_ok.clicked.connect(self.accept)
+                    btn_cancel.clicked.connect(self.reject)
+                    btn_row.addWidget(btn_ok)
+                    btn_row.addWidget(btn_cancel)
+                    layout.addLayout(btn_row)
+                    self.setLayout(layout)
+
+                def pin_text(self):
+                    return self.input_pin.text() or ''
+
+            pd = MaskedPinDialog(self)
+            if pd.exec_() != QDialog.Accepted:
                 return
 
-            if str(pin).strip() != str(self._admin_pin):
+            pin_val = pd.pin_text().strip()
+            # enforce exact 4-digit PIN
+            if len(pin_val) != 4:
+                # treat as incorrect PIN entry
+                self._admin_pin_attempts += 1
+                remaining_attempts = self._admin_pin_max_attempts - self._admin_pin_attempts
+                if remaining_attempts <= 0:
+                    # lockout
+                    self._admin_pin_lockout_until = datetime.now() + timedelta(minutes=self._admin_pin_lockout_minutes)
+                    self._admin_pin_attempts = 0
+                    try:
+                        sfx.play('Wrong')
+                    except Exception:
+                        pass
+                    QMessageBox.warning(self, "Locked", f"Too many attempts. Admin login locked for {self._admin_pin_lockout_minutes} minutes.")
+                    return
+                else:
+                    try:
+                        sfx.play('Wrong')
+                    except Exception:
+                        pass
+                    QMessageBox.warning(self, "Invalid PIN", f"PIN must be 4 digits. {remaining_attempts} attempts remaining.")
+                    return
+
+            if str(pin_val) != str(self._admin_pin):
                 # incorrect PIN
                 self._admin_pin_attempts += 1
                 remaining_attempts = self._admin_pin_max_attempts - self._admin_pin_attempts
