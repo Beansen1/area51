@@ -15,6 +15,7 @@ from model import ReceiptGenerator
 from datetime import datetime, timedelta
 import copy
 import sound as sfx
+import sqlite3
 
 class MainController(QMainWindow):
     def __init__(self):
@@ -92,6 +93,9 @@ class MainController(QMainWindow):
         self._admin_cred_attempts = 0
         self._admin_cred_max_attempts = 5
         self._admin_cred_lockout_until = None
+        # Currently authenticated admin (set after successful login)
+        self._current_admin = None
+
         # reuse self._admin_pin_lockout_minutes as lockout duration for creds
 
         # Initial Load
@@ -100,6 +104,54 @@ class MainController(QMainWindow):
         # Preload sounds (best-effort). Requires Qt event loop to actually play.
         try:
             sfx.load_sounds()
+        except Exception:
+            pass
+
+    def _write_audit(self, event_type, detail, username=None, role=None, retry=True):
+        """Write a row into audit_logs. If table missing, attempt to create schema then retry once."""
+        try:
+            conn = db.connect()
+            try:
+                conn.execute("INSERT INTO audit_logs (username, role, event_type, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+                             (username, role, event_type, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                conn.commit()
+                try:
+                    # If the insights panel is visible, refresh its data so UI reflects latest logs
+                    try:
+                        self.viz.refresh_charts()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            finally:
+                conn.close()
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            if retry and ('no such table' in msg or 'no such column' in msg):
+                try:
+                    db.check_schema()
+                except Exception:
+                    pass
+                # retry once
+                try:
+                    conn2 = db.connect()
+                    try:
+                        conn2.execute("INSERT INTO audit_logs (username, role, event_type, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+                                      (username, role, event_type, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        conn2.commit()
+                        try:
+                            try:
+                                self.viz.refresh_charts()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    finally:
+                        conn2.close()
+                except Exception:
+                    pass
+            else:
+                pass
         except Exception:
             pass
 
@@ -748,9 +800,22 @@ class MainController(QMainWindow):
             except Exception:
                 pass
 
-            # Successful credential verification: play correct sound
+            # Successful credential verification: play correct sound and record audit
             try:
-                sfx.play('Correct_or_Payment')
+                try:
+                    sfx.play('Correct_or_Payment')
+                except Exception:
+                    pass
+                # record successful login in audit_logs
+                try:
+                    self._write_audit('login_success', 'Admin login successful', username=row['username'], role=row['role'])
+                except Exception:
+                    pass
+                # set current admin context so subsequent admin actions can be attributed
+                try:
+                    self._current_admin = {'id': row['id'], 'username': row['username'], 'role': row['role']}
+                except Exception:
+                    self._current_admin = None
             except Exception:
                 pass
 
@@ -823,6 +888,18 @@ class MainController(QMainWindow):
         self.stack.addWidget(panel)
         self.stack.setCurrentWidget(panel)
 
+        # When the panel is closed (Back or Exit), clear current admin context
+        try:
+            def _on_panel_closed():
+                try:
+                    self._current_admin = None
+                except Exception:
+                    pass
+            panel.back_clicked.connect(_on_panel_closed)
+            panel.exit_clicked.connect(_on_panel_closed)
+        except Exception:
+            pass
+
     def _admin_search_items(self, query, panel):
         """Search items by name (simple LIKE) and populate the provided panel with results."""
         try:
@@ -876,6 +953,12 @@ class MainController(QMainWindow):
                         (payload['name'], payload['price'], payload['stock'], payload['category_id'], saved_path))
             conn.commit()
             QMessageBox.information(self, "Success", "Item added")
+            # audit log
+            try:
+                uname = (self._current_admin or {}).get('username')
+                self._write_audit('item_create', f"Created item: {payload.get('name')}", username=uname, role=(self._current_admin or {}).get('role'))
+            except Exception:
+                pass
         except Exception as e:
             conn.rollback()
             QMessageBox.critical(self, "Error", f"Failed to add item: {e}")
@@ -914,6 +997,13 @@ class MainController(QMainWindow):
             conn.commit()
             QMessageBox.information(self, "Success", f"Stock updated: {current} -> {new_stock_val}")
 
+            # audit log for stock adjustment
+            try:
+                uname = (self._current_admin or {}).get('username')
+                self._write_audit('stock_adjust', f"Item {item_id} stock {current} -> {new_stock_val}", username=uname, role=(self._current_admin or {}).get('role'))
+            except Exception:
+                pass
+
             # Refresh kiosk display
             try:
                 self.load_items()
@@ -949,6 +1039,12 @@ class MainController(QMainWindow):
                             (payload['name'], payload['price'], payload['stock'], payload['category_id'], item_id))
             conn.commit()
             QMessageBox.information(self, "Success", "Item updated")
+            # audit log
+            try:
+                uname = (self._current_admin or {}).get('username')
+                self._write_audit('item_update', f"Updated item {item_id}: {payload.get('name')}", username=uname, role=(self._current_admin or {}).get('role'))
+            except Exception:
+                pass
         except Exception as e:
             conn.rollback()
             QMessageBox.critical(self, "Error", f"Failed to update item: {e}")
@@ -961,6 +1057,12 @@ class MainController(QMainWindow):
             conn.execute("DELETE FROM items WHERE id=?", (item_id,))
             conn.commit()
             QMessageBox.information(self, "Deleted", "Item deleted")
+            # audit log for deletion
+            try:
+                uname = (self._current_admin or {}).get('username')
+                self._write_audit('item_delete', f"Deleted item {item_id}", username=uname, role=(self._current_admin or {}).get('role'))
+            except Exception:
+                pass
         except Exception as e:
             conn.rollback()
             QMessageBox.critical(self, "Error", f"Failed to delete item: {e}")
