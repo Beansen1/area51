@@ -26,6 +26,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirementsnito.txt
 
 NOTE: admin username and password
+
 ursn: admin; pass: Daley4rn
 
 ursn: superadmin; pass: Daley4rn123
